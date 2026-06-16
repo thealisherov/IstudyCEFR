@@ -1,26 +1,80 @@
 @import "tailwindcss";
-
+@custom-variant dark (&:where(.dark, .dark *));
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  
+  /* IELTS/CEFR Software theme colors */
+  --test-fg: #1e293b;
+  --test-bg: #ffffff;
+  --test-border: #cbd5e1;
+  --test-strip-bg: #f1f5f9;
+  --test-header-bg: #0f172a;
+  --test-header-fg: #ffffff;
+  --test-input-bg: #ffffff;
+  --test-nav-bg: #ffffff;
+  --test-nav-fg: #1e293b;
+  --opts-bg: #ffffff;
+  --opts-border: #cbd5e1;
+  --opts-fg: #334155;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+@layer base {
+  button, 
+  [role="button"],
+  input[type="submit"],
+  input[type="button"],
+  select,
+  a {
+    cursor: pointer !important;
+  }
+}
+
+/* Custom premium scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Custom styling for reading panel splitting */
+.split-pane {
+  display: flex;
+  height: calc(100vh - 56px - 56px); /* minus header and bottom nav */
+  overflow: hidden;
+}
+
+.pane-left {
+  width: 50%;
+  height: 100%;
+  overflow-y: auto;
+  border-right: 1.5px solid var(--test-border);
+  padding: 2rem;
+  background-color: var(--test-bg);
+}
+
+.pane-right {
+  width: 50%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 2rem;
+  background-color: var(--test-bg);
 }
