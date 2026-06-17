@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { getSubmissions, saveSubmission, getTestById } from '@/lib/db';
 import { Submission } from '@/types/test';
 import { toast } from 'sonner';
-import { AlertCircle, ArrowLeft, Calendar, Star } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Calendar, Star, Copy } from 'lucide-react';
 
 function SubmissionsContent() {
   const router = useRouter();
@@ -92,9 +92,24 @@ function SubmissionsContent() {
                 <div key={task.key}>
                   <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-950 px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-t-xl">
                     <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{task.label}</span>
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full">
-                      {wordCount(selectedSub.writingAnswers[task.key])} so'z
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          const text = selectedSub.writingAnswers[task.key];
+                          if (text) {
+                            navigator.clipboard.writeText(text);
+                            toast.success("Nusxa olindi!");
+                          }
+                        }}
+                        className="text-slate-400 hover:text-indigo-500 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Nusxa olish"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="text-[10px] font-bold text-slate-400 bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full">
+                        {wordCount(selectedSub.writingAnswers[task.key])} so'z
+                      </span>
+                    </div>
                   </div>
                   <div className="bg-slate-50 dark:bg-slate-950 border-x border-b border-slate-200 dark:border-slate-800 p-4 rounded-b-xl min-h-[100px] text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
                     {selectedSub.writingAnswers[task.key] || '(Javob yozilmagan)'}

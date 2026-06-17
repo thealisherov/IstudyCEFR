@@ -17,6 +17,9 @@ import MatchDropdown from '@/components/mock/parts/MatchDropdown';
 import CheckboxMultiple from '@/components/mock/parts/CheckboxMultiple';
 import MapLabeling from '@/components/mock/parts/MapLabeling';
 import TestNavigator from '@/components/mock/parts/TestNavigator';
+import { NotesProvider } from '@/components/mock/notes/NotesProvider';
+import TextAnnotator from '@/components/mock/notes/TextAnnotator';
+import NotesSidebar from '@/components/mock/notes/NotesSidebar';
 
 export default function TestPage() {
   const { testId } = useParams() as { testId: string };
@@ -293,11 +296,30 @@ export default function TestPage() {
 
     await saveSubmission(submission);
     store.submitTest();
+    clearTestAnnotations();
     confetti({ particleCount: 150, spread: 80 });
     toast.success('Imtihon muvaffaqiyatli topshirildi!');
   };
 
+  const clearTestAnnotations = () => {
+    try {
+      localStorage.removeItem(`notes_${testId}`);
+      const highlightPrefix = `highlights_${testId}_`;
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(highlightPrefix)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const handleExit = () => {
+    clearTestAnnotations();
     store.exitTest();
     router.push('/');
   };
@@ -545,8 +567,9 @@ export default function TestPage() {
   };
 
   return (
-    <div 
-      className="min-h-screen bg-white text-slate-900 font-sans flex flex-col justify-between overflow-hidden select-none"
+    <NotesProvider storageId={testId}>
+      <div 
+        className="min-h-screen bg-white text-slate-900 font-sans flex flex-col justify-between overflow-hidden select-none"
       style={{ colorScheme: 'light' }}
     >
       {/* Header */}
@@ -558,6 +581,14 @@ export default function TestPage() {
         </div>
 
         <div className="flex items-center gap-6">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_NOTES_SIDEBAR'))}
+            className="flex items-center gap-1.5 text-xs font-semibold text-blue-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded border border-slate-700"
+          >
+            <FileText className="w-4 h-4" />
+            Eslatmalar
+          </button>
+          
           <div className="flex items-center gap-1.5 text-amber-400 font-mono text-sm bg-amber-950/20 px-3 py-1 rounded border border-amber-900/30">
             <Clock className="w-4 h-4 animate-pulse" />
             <span>{formatTime(store.remainingTime)}</span>
@@ -573,7 +604,10 @@ export default function TestPage() {
       </header>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-hidden relative pt-14">
+      <TextAnnotator 
+        containerId={`section_${store.currentSection}_part_${activePart?.id}`}
+        className="flex-1 overflow-hidden relative pt-14"
+      >
         {store.currentSection === 'listening' && (
           <>
             {/* Map Labeling: special split-pane layout (image left, questions right) */}
@@ -796,7 +830,7 @@ export default function TestPage() {
             </div>
           </div>
         )}
-      </div>
+      </TextAnnotator>
 
       {/* Bottom Navigator */}
       <TestNavigator
@@ -910,6 +944,8 @@ export default function TestPage() {
           </div>
         </div>
       )}
+      <NotesSidebar />
     </div>
+    </NotesProvider>
   );
 }
