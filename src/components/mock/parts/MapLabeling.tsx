@@ -69,7 +69,7 @@ const MapLabeling: React.FC<MapLabelingProps> = ({
     <div className="font-sans" ref={containerRef}>
       {/* Instruction */}
       {!hideInstruction && data.instruction && (
-        <div className="mb-5 text-sm text-slate-700 leading-relaxed font-medium">
+        <div className="mb-5 text-sm leading-relaxed font-medium" style={{ color: 'var(--test-fg)' }}>
           <div dangerouslySetInnerHTML={{ __html: data.instruction }} />
         </div>
       )}
@@ -79,7 +79,7 @@ const MapLabeling: React.FC<MapLabelingProps> = ({
         {/* Left: Map Image */}
         {!hideImage && data.imageUrl && (
           <div className="lg:w-1/2 shrink-0">
-            <div className="sticky top-4 rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="sticky top-4 rounded-2xl border shadow-sm p-1" style={{ backgroundColor: 'var(--test-bg)', borderColor: 'var(--test-border)' }}>
               <img
                 src={data.imageUrl}
                 alt="Map / Plan"
@@ -105,29 +105,42 @@ const MapLabeling: React.FC<MapLabelingProps> = ({
                 <div
                   key={q.id || questionId}
                   id={`question-${globalNum}`}
-                  className="flex items-center gap-4 py-3 px-4 rounded-xl bg-slate-50/80 border border-slate-100 hover:border-slate-200 hover:bg-slate-50 transition-all duration-200"
+                  className="flex items-center gap-4 py-3 px-4 rounded-xl border transition-all duration-200 relative"
+                  style={{ 
+                    backgroundColor: isOpen ? 'var(--test-bg)' : 'transparent',
+                    borderColor: isOpen ? 'var(--test-border)' : 'transparent',
+                    zIndex: isOpen ? 9999 : 10
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isOpen) e.currentTarget.style.backgroundColor = 'rgba(128, 128, 128, 0.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isOpen) e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
                 >
                   {/* Number badge */}
-                  <span className="shrink-0 inline-flex items-center justify-center w-[2em] h-[2em] border border-gray-800 text-gray-900 font-bold bg-white select-none" style={{ fontSize: '1.1em' }}>
+                  <span className="shrink-0 inline-flex items-center justify-center w-[2em] h-[2em] border font-bold select-none" style={{ fontSize: '1.1em', backgroundColor: 'var(--test-bg)', borderColor: 'var(--test-border)', color: 'var(--test-fg)' }}>
                     {globalNum}
                   </span>
 
                   {/* Question text */}
                   <div
-                    className="flex-1 text-sm font-semibold text-slate-800 leading-snug"
+                    className="flex-1 text-sm font-semibold leading-snug"
+                    style={{ color: 'var(--test-fg)' }}
                     dangerouslySetInnerHTML={{ __html: q.text }}
                   />
 
                   {/* Dropdown */}
-                  <div className="relative shrink-0">
+                  <div className={`relative shrink-0 ${isOpen ? 'z-[100]' : 'z-10'}`}>
                     <button
                       onClick={() => setOpenDropdown(prev => prev === questionId ? null : questionId)}
-                      className={`flex items-center gap-2 h-10 px-3.5 rounded-xl border text-sm font-medium transition-all duration-200 ${
-                        selected
-                          ? 'border-blue-500 bg-blue-50 text-blue-800 shadow-sm shadow-blue-100'
-                          : 'border-slate-300 bg-white text-slate-400 hover:border-slate-400 hover:shadow-sm'
-                      }`}
-                      style={{ minWidth: '190px' }}
+                      className="flex items-center gap-2 h-10 px-3.5 rounded-xl border text-sm font-medium transition-all duration-200"
+                      style={{ 
+                        minWidth: '190px',
+                        backgroundColor: selected ? 'rgba(59, 130, 246, 0.15)' : 'var(--test-bg)',
+                        borderColor: selected ? '#3b82f6' : 'var(--test-border)',
+                        color: selected ? '#2563eb' : 'var(--test-fg)'
+                      }}
                     >
                       {selected ? (
                         <span className="flex items-center gap-2 flex-1 min-w-0">
@@ -135,22 +148,22 @@ const MapLabeling: React.FC<MapLabelingProps> = ({
                             {selected}
                           </span>
                           {selectedFull?.desc && (
-                            <span className="truncate text-xs font-semibold text-blue-800">
+                            <span className="truncate text-xs font-semibold" style={{ color: '#2563eb' }}>
                               {selectedFull.desc}
                             </span>
                           )}
                         </span>
                       ) : (
-                        <span className="flex-1 text-xs text-left font-medium">Select an option</span>
+                        <span className="flex-1 text-xs text-left font-medium" style={{ opacity: 0.6 }}>Select an option</span>
                       )}
-                      <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`w-4 h-4 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} style={{ opacity: 0.5 }} />
                     </button>
 
                     {/* Dropdown panel */}
                     {isOpen && (
                       <div
-                        className="absolute right-0 top-full mt-2 z-50 rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
-                        style={{ minWidth: '280px' }}
+                        className="absolute right-0 top-full mt-2 z-50 rounded-xl border shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150"
+                        style={{ minWidth: '280px', backgroundColor: 'var(--test-bg)', borderColor: 'var(--test-border)' }}
                       >
                         {fullOptions.map(({ letter, desc }) => {
                           const isSel = selected === letter;
@@ -158,13 +171,25 @@ const MapLabeling: React.FC<MapLabelingProps> = ({
                             <div
                               key={letter}
                               onClick={() => handleSelect(questionId, letter)}
-                              className={`flex items-center gap-3 px-4 py-3 cursor-pointer text-sm transition-colors duration-100 ${
-                                isSel ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-50'
-                              }`}
+                              className="flex items-center gap-3 px-4 py-3 cursor-pointer text-sm transition-colors duration-100"
+                              style={{
+                                backgroundColor: isSel ? 'rgba(37, 99, 235, 1)' : 'transparent',
+                                color: isSel ? '#fff' : 'var(--test-fg)'
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isSel) e.currentTarget.style.backgroundColor = 'rgba(128, 128, 128, 0.1)';
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isSel) e.currentTarget.style.backgroundColor = 'transparent';
+                              }}
                             >
-                              <span className={`shrink-0 w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center ${
-                                isSel ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700 border border-slate-200'
-                              }`}>
+                              <span className="shrink-0 w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center border"
+                                style={{
+                                  backgroundColor: isSel ? 'rgba(255, 255, 255, 0.2)' : 'var(--test-bg)',
+                                  borderColor: isSel ? 'transparent' : 'var(--test-border)',
+                                  color: isSel ? '#fff' : 'var(--test-fg)'
+                                }}
+                              >
                                 {letter}
                               </span>
                               {desc && <span className="flex-1 font-medium">{desc}</span>}

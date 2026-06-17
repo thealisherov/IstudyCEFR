@@ -52,76 +52,249 @@ const AudioPlayer = () => {
   const test = useTestStore((state) => state.test);
   const currentSection = useTestStore((state) => state.currentSection);
   const audioUrl = test?.listeningAudioUrl;
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isActiveRef = useRef(false);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
-    if (currentSection !== 'listening' || !audioUrl || !audioRef.current) return;
-    
-    const audio = audioRef.current;
-    let isUnmounting = false;
-
-    const playAudio = () => {
-      if (isUnmounting) return;
-      audio.play().catch(e => console.warn("Autoplay prevented:", e));
-    };
-
-    // Auto-start audio immediately
-    playAudio();
-
-    // Intercept and prevent browser's global media controls (Media Session API)
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'Listening Test',
-        artist: 'iSTUDY Mock Exam',
-        album: 'Do Not Pause',
-      });
-      navigator.mediaSession.setActionHandler('pause', () => playAudio()); // Force play
-      navigator.mediaSession.setActionHandler('play', () => playAudio());
-      navigator.mediaSession.setActionHandler('seekbackward', () => {}); // Prevent seek
-      navigator.mediaSession.setActionHandler('seekforward', () => {}); // Prevent seek
-      navigator.mediaSession.setActionHandler('seekto', () => {}); // Prevent seek
+    if (currentSection !== 'listening' || !audioUrl) {
+      setIsPlaying(false);
+      return;
     }
 
-    // Forcefully resume if user or extension attempts to pause via DOM
-    const handlePause = () => {
-      if (!isUnmounting && !audio.ended) {
-        playAudio();
+    let cancelled = false;
+    isActiveRef.current = true;
+
+    // ===== STRATEGY 1: Web Audio API (Primary - invisible to browser/extensions) =====
+    const startWebAudioPlayback = async () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = ctx;
+
+        const response = await fetch(audioUrl);
+        if (cancelled) return;
+        const arrayBuffer = await response.arrayBuffer();
+        if (cancelled) return;
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        if (cancelled) return;
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        sourceNodeRef.current = source;
+        setIsPlaying(true);
+
+        source.onended = () => {
+          if (!cancelled) setIsPlaying(false);
+        };
+
+        // Prevent AudioContext suspension (browser may suspend on tab switch)
+        const keepAlive = setInterval(() => {
+          if (cancelled) { clearInterval(keepAlive); return; }
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+        }, 200);
+
+        return () => clearInterval(keepAlive);
+      } catch {
+        // Web Audio API failed, use fallback
+        if (!cancelled) startFallbackPlayback();
       }
     };
 
-    audio.addEventListener('pause', handlePause);
+    // ===== STRATEGY 2: HTMLAudioElement fallback with aggressive protection =====
+    const startFallbackPlayback = () => {
+      const audio = new Audio();
+      audio.src = audioUrl;
+      audio.volume = 1;
+      audio.preload = 'auto';
+      // @ts-ignore
+      audio.controlsList = 'nodownload nofullscreen noremoteplayback';
+      audio.setAttribute('disableRemotePlayback', '');
+      fallbackAudioRef.current = audio;
 
-    return () => {
-      isUnmounting = true;
-      audio.removeEventListener('pause', handlePause);
-      audio.pause();
-      audio.src = '';
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('pause', null);
-        navigator.mediaSession.setActionHandler('play', null);
-        navigator.mediaSession.setActionHandler('seekbackward', null);
-        navigator.mediaSession.setActionHandler('seekforward', null);
-        navigator.mediaSession.setActionHandler('seekto', null);
+      const forcePlay = () => {
+        if (cancelled || audio.ended) return;
+        audio.play().catch(() => {});
+      };
+
+      // Aggressive pause interception
+      audio.addEventListener('pause', () => {
+        if (!cancelled && !audio.ended) {
+          requestAnimationFrame(forcePlay);
+        }
+      });
+
+      // Prevent seeking - lock current time
+      let expectedTime = 0;
+      audio.addEventListener('timeupdate', () => {
+        if (cancelled) return;
+        expectedTime = audio.currentTime;
+      });
+      audio.addEventListener('seeking', () => {
+        if (cancelled) return;
+        // If someone tries to seek, snap back
+        if (Math.abs(audio.currentTime - expectedTime) > 1) {
+          audio.currentTime = expectedTime;
+        }
+      });
+
+      // Prevent volume changes
+      audio.addEventListener('volumechange', () => {
+        if (cancelled) return;
+        if (audio.volume !== 1) audio.volume = 1;
+        if (audio.muted) audio.muted = false;
+      });
+
+      // Prevent rate changes
+      audio.addEventListener('ratechange', () => {
+        if (cancelled) return;
+        if (audio.playbackRate !== 1) audio.playbackRate = 1;
+      });
+
+      // Re-create source if cleared
+      audio.addEventListener('emptied', () => {
+        if (!cancelled && audioUrl) {
+          audio.src = audioUrl;
+          forcePlay();
+        }
+      });
+
+      audio.addEventListener('ended', () => {
+        if (!cancelled) setIsPlaying(false);
+      });
+
+      // Start playing
+      audio.play().then(() => {
+        if (!cancelled) setIsPlaying(true);
+      }).catch(() => {});
+
+      // Continuous monitoring: re-force play every 500ms
+      const monitor = setInterval(() => {
+        if (cancelled) { clearInterval(monitor); return; }
+        if (audio.paused && !audio.ended) {
+          forcePlay();
+        }
+      }, 500);
+    };
+
+    // ===== Media Session API Override =====
+    if ('mediaSession' in navigator) {
+      const noop = () => {};
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Examination Audio',
+        artist: 'CEFR Listening',
+      });
+      navigator.mediaSession.setActionHandler('pause', noop);
+      navigator.mediaSession.setActionHandler('play', noop);
+      navigator.mediaSession.setActionHandler('seekbackward', noop);
+      navigator.mediaSession.setActionHandler('seekforward', noop);
+      navigator.mediaSession.setActionHandler('seekto', noop);
+      navigator.mediaSession.setActionHandler('stop', noop);
+      navigator.mediaSession.setActionHandler('previoustrack', noop);
+      navigator.mediaSession.setActionHandler('nexttrack', noop);
+    }
+
+    // ===== Block media keyboard shortcuts =====
+    const blockMediaKeys = (e: KeyboardEvent) => {
+      const blocked = [
+        'MediaPlayPause', 'MediaStop', 'MediaTrackPrevious', 'MediaTrackNext',
+        'AudioVolumeMute', 'AudioVolumeDown', 'AudioVolumeUp',
+      ];
+      if (blocked.includes(e.key) || blocked.includes(e.code)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return false;
       }
+      // Block spacebar on non-input elements (common media toggle)
+      if (e.key === ' ' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('keydown', blockMediaKeys, true);
+
+    // ===== Block right-click context menu on audio elements =====
+    const blockContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target?.tagName === 'AUDIO' || target?.tagName === 'VIDEO') {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('contextmenu', blockContextMenu, true);
+
+    // ===== Prevent page visibility from affecting audio =====
+    const handleVisibilityChange = () => {
+      if (cancelled) return;
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      if (fallbackAudioRef.current && fallbackAudioRef.current.paused && !fallbackAudioRef.current.ended) {
+        fallbackAudioRef.current.play().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Start playback
+    startWebAudioPlayback();
+
+    // ===== Cleanup =====
+    return () => {
+      cancelled = true;
+      isActiveRef.current = false;
+
+      // Stop Web Audio
+      try {
+        sourceNodeRef.current?.stop();
+      } catch {}
+      try {
+        audioCtxRef.current?.close();
+      } catch {}
+      sourceNodeRef.current = null;
+      audioCtxRef.current = null;
+
+      // Stop fallback
+      if (fallbackAudioRef.current) {
+        fallbackAudioRef.current.pause();
+        fallbackAudioRef.current.src = '';
+        fallbackAudioRef.current = null;
+      }
+
+      // Remove listeners
+      document.removeEventListener('keydown', blockMediaKeys, true);
+      document.removeEventListener('contextmenu', blockContextMenu, true);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+
+      // Clear Media Session
+      if ('mediaSession' in navigator) {
+        const handlers: MediaSessionAction[] = ['pause', 'play', 'seekbackward', 'seekforward', 'seekto', 'stop', 'previoustrack', 'nexttrack'];
+        handlers.forEach(action => {
+          try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+        });
+      }
+
+      setIsPlaying(false);
     };
   }, [currentSection, audioUrl]);
 
   if (currentSection !== 'listening' || !audioUrl) return null;
 
   return (
-    <div className="flex items-center gap-2 px-2 py-1 pointer-events-none select-none">
-      <audio 
-        ref={audioRef} 
-        src={audioUrl} 
-        controlsList="nodownload nofullscreen noremoteplayback" 
+    <div className="flex items-center gap-2 px-2 py-1 pointer-events-none select-none" aria-hidden="true">
+      <Volume2
+        className={`w-6 h-6 ${isPlaying ? 'animate-pulse' : ''}`}
+        style={{ color: 'var(--test-header-fg)', opacity: isPlaying ? 0.8 : 0.3 }}
       />
-      <Volume2 className="w-6 h-6 animate-pulse" style={{ color: 'var(--test-header-fg)', opacity: 0.8 }} />
     </div>
   );
 };
 
-const SettingsMenu = ({ 
-  theme, setTheme, 
+const SettingsMenu = ({
+  theme, setTheme,
   textSize, setTextSize,
   onExit,
   onSubmit
@@ -150,7 +323,7 @@ const SettingsMenu = ({
 
   return (
     <>
-      <button 
+      <button
         onClick={() => setIsOpen(true)}
         className="flex items-center justify-center transition hover:opacity-70"
         style={{ color: 'var(--test-header-fg)' }}
@@ -160,16 +333,16 @@ const SettingsMenu = ({
 
       {isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 font-sans ignore-theme">
-          <div 
+          <div
             className="rounded-xl shadow-2xl w-full max-w-[500px] overflow-hidden flex flex-col border"
             style={{ backgroundColor: 'var(--test-bg)', color: 'var(--test-fg)', borderColor: 'var(--test-border)' }}
           >
-            
+
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b relative" style={{ borderColor: 'var(--test-border)' }}>
               {view !== 'main' && (
-                <button 
-                  onClick={() => setView('main')} 
+                <button
+                  onClick={() => setView('main')}
                   className="absolute left-6 flex items-center gap-1 opacity-70 hover:opacity-100 font-medium"
                 >
                   <ChevronLeft className="w-5 h-5" />
@@ -186,8 +359,8 @@ const SettingsMenu = ({
             <div className="p-8">
               {view === 'main' && (
                 <div className="space-y-6">
-                  <button 
-                    onClick={() => { setIsOpen(false); if(onSubmit) onSubmit(); }}
+                  <button
+                    onClick={() => { setIsOpen(false); if (onSubmit) onSubmit(); }}
                     className="w-full flex items-center justify-between bg-[#c8102e] hover:bg-[#a50d26] text-white p-4 rounded-lg font-medium transition"
                   >
                     <div className="flex items-center gap-4">
@@ -198,8 +371,8 @@ const SettingsMenu = ({
                   </button>
 
                   <div className="border rounded-lg shadow-sm" style={{ borderColor: 'var(--test-border)' }}>
-                    <button 
-                      onClick={() => setView('contrast')} 
+                    <button
+                      onClick={() => setView('contrast')}
                       className="w-full flex items-center justify-between p-4 border-b transition hover:opacity-70"
                       style={{ borderColor: 'var(--test-border)' }}
                     >
@@ -209,8 +382,8 @@ const SettingsMenu = ({
                       </div>
                       <ChevronRight className="w-4 h-4 opacity-50" />
                     </button>
-                    <button 
-                      onClick={() => setView('text-size')} 
+                    <button
+                      onClick={() => setView('text-size')}
                       className="w-full flex items-center justify-between p-4 transition hover:opacity-70"
                     >
                       <div className="flex items-center gap-4">
@@ -221,7 +394,7 @@ const SettingsMenu = ({
                     </button>
                   </div>
 
-                  <button 
+                  <button
                     onClick={() => { setIsOpen(false); onExit(); }}
                     className="w-full flex items-center justify-center gap-3 p-4 border border-[#c8102e] text-[#c8102e] rounded-lg hover:bg-[#c8102e] hover:text-white transition font-bold"
                   >
@@ -238,7 +411,7 @@ const SettingsMenu = ({
                     { id: 'white-on-black', label: 'White on black' },
                     { id: 'yellow-on-black', label: 'Yellow on black' }
                   ].map(opt => (
-                    <button 
+                    <button
                       key={opt.id}
                       onClick={() => setTheme(opt.id as any)}
                       className="flex items-center gap-4 px-5 py-4 rounded-lg text-lg font-medium transition border"
@@ -261,7 +434,7 @@ const SettingsMenu = ({
                     { id: 'large', label: 'Large' },
                     { id: 'xl', label: 'Extra large' }
                   ].map(opt => (
-                    <button 
+                    <button
                       key={opt.id}
                       onClick={() => setTextSize(opt.id as any)}
                       className="flex items-center gap-4 px-5 py-4 rounded-lg text-lg font-medium transition border"
@@ -277,7 +450,7 @@ const SettingsMenu = ({
                 </div>
               )}
             </div>
-            
+
           </div>
         </div>
       )}
@@ -333,7 +506,7 @@ export default function TestPage() {
   }, [textSize]);
 
   const themeVariables = useMemo(() => {
-    switch(theme) {
+    switch (theme) {
       case 'white-on-black':
         return {
           '--test-bg': '#1a1a2e',
@@ -897,398 +1070,398 @@ export default function TestPage() {
           border-color: var(--test-border) !important;
         }
       `}</style>
-      <div 
+      <div
         id="cefr-test-wrapper"
         className="min-h-screen font-sans flex flex-col justify-between overflow-hidden select-none transition-colors duration-200"
         style={{ ...themeVariables, colorScheme: theme === 'black-on-white' ? 'light' : 'dark' } as React.CSSProperties}
       >
-      {/* Header */}
-      <header 
-        className="fixed top-0 left-0 w-full h-22 border-b px-6 flex justify-between items-center z-50 select-none transition-colors duration-200"
-        style={{ backgroundColor: 'var(--test-header-bg)', color: 'var(--test-header-fg)', borderColor: 'var(--test-border)' }}
-      >
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-3 font-extrabold text-2xl tracking-tight text-blue-500">
-            <Image src="/istudylogo1.png" alt="iSTUDY Logo" width={56} height={56} className="rounded object-contain" />
-            <span>iSTUDY<span className="ml-1" style={{ color: 'var(--test-header-fg)' }}>Mock</span></span>
+        {/* Header */}
+        <header
+          className="fixed top-0 left-0 w-full h-22 border-b px-6 flex justify-between items-center z-50 select-none transition-colors duration-200"
+          style={{ backgroundColor: 'var(--test-header-bg)', color: 'var(--test-header-fg)', borderColor: 'var(--test-border)' }}
+        >
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-3 font-extrabold text-2xl tracking-tight text-blue-500">
+              <Image src="/istudylogo1.png" alt="iSTUDY Logo" width={56} height={56} className="rounded object-contain" />
+              <span>iSTUDY<span className="ml-1" style={{ color: 'var(--test-header-fg)' }}>Mock</span></span>
+            </div>
+            <span className="h-8 w-[3px]" style={{ backgroundColor: 'var(--test-border)' }}></span>
+            <span className="text-xl font-semibold" style={{ color: 'var(--test-header-fg)' }}>{store.firstName} {store.lastName}</span>
           </div>
-          <span className="h-8 w-[3px]" style={{ backgroundColor: 'var(--test-border)' }}></span>
-          <span className="text-xl font-semibold" style={{ color: 'var(--test-header-fg)' }}>{store.firstName} {store.lastName}</span>
-        </div>
 
-        <div className="flex items-center gap-5">
-          <TimerDisplay />
-          <AudioPlayer />
-          
-          <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
-            <Wifi className="w-6 h-6" strokeWidth={2} />
-          </button>
-          
-          <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
-            <Bell className="w-6 h-6" strokeWidth={2} />
-          </button>
-          
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_NOTES_SIDEBAR'))}
-            className="flex items-center justify-center transition hover:opacity-70"
-            style={{ color: 'var(--test-header-fg)' }}
-            title="Eslatmalar"
-          >
-            <Quote className="w-6 h-6" strokeWidth={2} />
-          </button>
+          <div className="flex items-center gap-5">
+            <TimerDisplay />
+            <AudioPlayer />
 
-          <SettingsMenu 
-            theme={theme} setTheme={setTheme} 
-            textSize={textSize} setTextSize={setTextSize} 
-            onExit={() => setShowExitModal(true)} 
-            onSubmit={() => setShowSubmitModal(true)}
-          />
-        </div>
-      </header>
+            <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
+              <Wifi className="w-6 h-6" strokeWidth={2} />
+            </button>
 
-      {/* Content Area */}
-      <TextAnnotator 
-        containerId={`section_${store.currentSection}_part_${activePart?.id}`}
-        className="flex-1 overflow-hidden relative pt-16 cefr-test-content"
-      >
-        {store.currentSection === 'listening' && (
-          <>
-            {/* Map Labeling: special split-pane layout (image left, questions right) */}
-            {activePart?.type === 'map_labeling' ? (
-              <div className="split-pane">
-                {/* Left: Map Image */}
-                <div className="pane-left">
-                  <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
-                  {(activePart as any).instruction && (
-                    <div className="mb-4 text-sm text-slate-600 leading-relaxed font-medium"
-                      dangerouslySetInnerHTML={{ __html: (activePart as any).instruction }}
-                    />
-                  )}
-                  {(activePart as any).imageUrl && (
-                    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                      <img
-                        src={(activePart as any).imageUrl}
-                        alt="Map / Plan"
-                        className="w-full h-auto block"
-                        style={{ maxWidth: '100%' }}
-                        draggable={false}
+            <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
+              <Bell className="w-6 h-6" strokeWidth={2} />
+            </button>
+
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_NOTES_SIDEBAR'))}
+              className="flex items-center justify-center transition hover:opacity-70"
+              style={{ color: 'var(--test-header-fg)' }}
+              title="Eslatmalar"
+            >
+              <Quote className="w-6 h-6" strokeWidth={2} />
+            </button>
+
+            <SettingsMenu
+              theme={theme} setTheme={setTheme}
+              textSize={textSize} setTextSize={setTextSize}
+              onExit={() => setShowExitModal(true)}
+              onSubmit={() => setShowSubmitModal(true)}
+            />
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <TextAnnotator
+          containerId={`section_${store.currentSection}_part_${activePart?.id}`}
+          className="flex-1 overflow-hidden relative pt-16 cefr-test-content"
+        >
+          {store.currentSection === 'listening' && (
+            <>
+              {/* Map Labeling: special split-pane layout (image left, questions right) */}
+              {activePart?.type === 'map_labeling' ? (
+                <div className="split-pane">
+                  {/* Left: Map Image */}
+                  <div className="pane-left">
+                    <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
+                    {(activePart as any).instruction && (
+                      <div className="mb-4 text-sm text-slate-600 leading-relaxed font-medium"
+                        dangerouslySetInnerHTML={{ __html: (activePart as any).instruction }}
                       />
-                    </div>
+                    )}
+                    {(activePart as any).imageUrl && (
+                      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                        <img
+                          src={(activePart as any).imageUrl}
+                          alt="Map / Plan"
+                          className="w-full h-auto block"
+                          style={{ maxWidth: '100%' }}
+                          draggable={false}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: Questions with dropdowns */}
+                  <div className="pane-right">
+                    <MapLabeling
+                      data={activePart as any}
+                      onAnswer={handleAnswerSubmit}
+                      startIndex={partQuestionRanges[store.currentPartIndex]?.start}
+                      userAnswers={store.answers}
+                      hideImage
+                      hideInstruction
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* All other listening question types: normal single column */
+                <div className="h-full flex flex-col">
+                  <div className="flex-1 overflow-y-auto p-8 max-w-5xl w-full ml-0 pr-8">
+                    <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
+
+                    {activePart?.type === 'multiple_choice' && (
+                      <TrueFalse
+                        data={activePart as any}
+                        onAnswer={handleAnswerSubmit}
+                        startIndex={partQuestionRanges[store.currentPartIndex]?.start}
+                        userAnswers={store.answers}
+                      />
+                    )}
+                    {(activePart?.type === 'gap_fill' || activePart?.type === 'gap_fill_missing' || activePart?.type === 'gap_input' || activePart?.type === 'summary_comp') && (
+                      <GapFill
+                        data={activePart}
+                        onAnswer={handleAnswerSubmit}
+                        userAnswers={store.answers}
+                      />
+                    )}
+                    {(activePart?.type === 'matching' || activePart?.type === 'match_info' || activePart?.type === 'match_features' || activePart?.type === 'match_headings') && (
+                      <MatchDropdown
+                        data={activePart as any}
+                        onAnswer={handleAnswerSubmit}
+                        startIndex={partQuestionRanges[store.currentPartIndex]?.start}
+                        userAnswers={store.answers}
+                      />
+                    )}
+                    {activePart?.type === 'abc_checkbox' && (
+                      <CheckboxMultiple
+                        data={activePart as any}
+                        onAnswer={handleAnswerSubmit}
+                        userAnswers={store.answers}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {store.currentSection === 'reading' && (
+            isSplitReading ? (
+              <div ref={containerRef} className="split-pane flex w-full h-full select-none">
+                {/* Left side: Passage Text */}
+                <div className="pane-left overflow-y-auto" style={{ width: `${leftWidth}%`, borderRight: 'none' }}>
+                  {(activePart as TestPart)?.passageTitle && (
+                    <h2 className="text-2xl font-extrabold text-slate-900 mb-6 pb-4 border-b border-slate-100">
+                      {(activePart as TestPart).passageTitle}
+                    </h2>
                   )}
+                  <div
+                    className="text-slate-800 leading-relaxed text-sm space-y-4 [&>p]:mb-4"
+                    dangerouslySetInnerHTML={{ __html: (activePart as TestPart)?.passageText || '' }}
+                  />
                 </div>
 
-                {/* Right: Questions with dropdowns */}
-                <div className="pane-right">
-                  <MapLabeling
-                    data={activePart as any}
-                    onAnswer={handleAnswerSubmit}
-                    startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                    userAnswers={store.answers}
-                    hideImage
-                    hideInstruction
-                  />
+                {/* Resizable Divider */}
+                <div
+                  className="w-1 bg-slate-200 hover:bg-blue-500 cursor-col-resize relative flex-shrink-0 flex items-center justify-center transition-all duration-150 z-20"
+                  onMouseDown={handleMouseDown}
+                >
+                  <div className="absolute w-7 h-7 bg-white border border-slate-300 rounded-md shadow flex items-center justify-center pointer-events-none select-none text-slate-500 hover:text-slate-700">
+                    <ChevronsLeftRight className="w-4 h-4" />
+                  </div>
+                </div>
+
+                {/* Right side: Questions */}
+                <div className="pane-right overflow-y-auto" style={{ width: `${100 - leftWidth}%` }}>
+                  <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
+                  {renderReadingQuestions()}
                 </div>
               </div>
             ) : (
-              /* All other listening question types: normal single column */
               <div className="h-full flex flex-col">
-                <div className="flex-1 overflow-y-auto p-8 max-w-5xl w-full ml-0 pr-8">
+                <div className="flex-1 overflow-y-auto p-8 max-w-5xl w-full ml-0 pr-8 pb-24">
                   <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
-
-                  {activePart?.type === 'multiple_choice' && (
-                    <TrueFalse
-                      data={activePart as any}
-                      onAnswer={handleAnswerSubmit}
-                      startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                      userAnswers={store.answers}
-                    />
-                  )}
-                  {(activePart?.type === 'gap_fill' || activePart?.type === 'gap_fill_missing' || activePart?.type === 'gap_input' || activePart?.type === 'summary_comp') && (
-                    <GapFill
-                      data={activePart}
-                      onAnswer={handleAnswerSubmit}
-                      userAnswers={store.answers}
-                    />
-                  )}
-                  {(activePart?.type === 'matching' || activePart?.type === 'match_info' || activePart?.type === 'match_features' || activePart?.type === 'match_headings') && (
-                    <MatchDropdown
-                      data={activePart as any}
-                      onAnswer={handleAnswerSubmit}
-                      startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                      userAnswers={store.answers}
-                    />
-                  )}
-                  {activePart?.type === 'abc_checkbox' && (
-                    <CheckboxMultiple
-                      data={activePart as any}
-                      onAnswer={handleAnswerSubmit}
-                      userAnswers={store.answers}
-                    />
-                  )}
+                  {renderReadingQuestions()}
                 </div>
               </div>
-            )}
-          </>
-        )}
+            )
+          )}
 
-        {store.currentSection === 'reading' && (
-          isSplitReading ? (
-            <div ref={containerRef} className="split-pane flex w-full h-full select-none">
-              {/* Left side: Passage Text */}
-              <div className="pane-left overflow-y-auto" style={{ width: `${leftWidth}%`, borderRight: 'none' }}>
-                {(activePart as TestPart)?.passageTitle && (
-                  <h2 className="text-2xl font-extrabold text-slate-900 mb-6 pb-4 border-b border-slate-100">
-                    {(activePart as TestPart).passageTitle}
-                  </h2>
-                )}
-                <div
-                  className="text-slate-800 leading-relaxed text-sm space-y-4 [&>p]:mb-4"
-                  dangerouslySetInnerHTML={{ __html: (activePart as TestPart)?.passageText || '' }}
-                />
-              </div>
+          {store.currentSection === 'writing' && (
+            <div className="split-pane">
+              {/* Left side: Prompt */}
+              <div className="pane-left">
+                <h2 className="text-xl font-extrabold text-slate-900 mb-4">
+                  {activePart?.title}
+                </h2>
+                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-4">
+                  Instructions:
+                </p>
 
-              {/* Resizable Divider */}
-              <div
-                className="w-1 bg-slate-200 hover:bg-blue-500 cursor-col-resize relative flex-shrink-0 flex items-center justify-center transition-all duration-150 z-20"
-                onMouseDown={handleMouseDown}
-              >
-                <div className="absolute w-7 h-7 bg-white border border-slate-300 rounded-md shadow flex items-center justify-center pointer-events-none select-none text-slate-500 hover:text-slate-700">
-                  <ChevronsLeftRight className="w-4 h-4" />
-                </div>
-              </div>
-
-              {/* Right side: Questions */}
-              <div className="pane-right overflow-y-auto" style={{ width: `${100 - leftWidth}%` }}>
-                <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
-                {renderReadingQuestions()}
-              </div>
-            </div>
-          ) : (
-            <div className="h-full flex flex-col">
-              <div className="flex-1 overflow-y-auto p-8 max-w-5xl w-full ml-0 pr-8 pb-24">
-                <h4 className="text-xl font-bold text-slate-900 mb-4">{activePart?.title}</h4>
-                {renderReadingQuestions()}
-              </div>
-            </div>
-          )
-        )}
-
-        {store.currentSection === 'writing' && (
-          <div className="split-pane">
-            {/* Left side: Prompt */}
-            <div className="pane-left">
-              <h2 className="text-xl font-extrabold text-slate-900 mb-4">
-                {activePart?.title}
-              </h2>
-              <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-4">
-                Instructions:
-              </p>
-
-              {/* Check if is nested (Task 1) */}
-              {(activePart as any).isNested ? (
-                <div className="space-y-6">
-                  <p className="text-slate-700 text-sm italic font-medium">
-                    {activePart?.prompt}
-                  </p>
-
-                  {/* Tabs selector within left pane for clarity */}
-                  <div className="flex gap-2 border-b border-slate-100 pb-2">
-                    {(activePart as any).nestedParts.map((subPart: any, idx: number) => (
-                      <button
-                        key={subPart.id}
-                        type="button"
-                        onClick={() => setActiveWritingTab(idx)}
-                        className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${activeWritingTab === idx
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                          }`}
-                      >
-                        {subPart.title}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                    <h5 className="font-extrabold text-sm text-slate-900 mb-2">
-                      {(activePart as any).nestedParts[activeWritingTab]?.title}
-                    </h5>
-                    <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">
-                      {(activePart as any).nestedParts[activeWritingTab]?.prompt}
+                {/* Check if is nested (Task 1) */}
+                {(activePart as any).isNested ? (
+                  <div className="space-y-6">
+                    <p className="text-slate-700 text-sm italic font-medium">
+                      {activePart?.prompt}
                     </p>
-                    <div className="flex gap-4 mt-3 text-[10px] text-slate-500 font-bold uppercase">
-                      <span>Min Words: {(activePart as any).nestedParts[activeWritingTab]?.minWords || 150}</span>
-                      <span>Suggested Time: {(activePart as any).nestedParts[activeWritingTab]?.suggestedMinutes || 20}m</span>
+
+                    {/* Tabs selector within left pane for clarity */}
+                    <div className="flex gap-2 border-b border-slate-100 pb-2">
+                      {(activePart as any).nestedParts.map((subPart: any, idx: number) => (
+                        <button
+                          key={subPart.id}
+                          type="button"
+                          onClick={() => setActiveWritingTab(idx)}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${activeWritingTab === idx
+                            ? 'bg-blue-600 text-white shadow-sm'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                            }`}
+                        >
+                          {subPart.title}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                      <h5 className="font-extrabold text-sm text-slate-900 mb-2">
+                        {(activePart as any).nestedParts[activeWritingTab]?.title}
+                      </h5>
+                      <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">
+                        {(activePart as any).nestedParts[activeWritingTab]?.prompt}
+                      </p>
+                      <div className="flex gap-4 mt-3 text-[10px] text-slate-500 font-bold uppercase">
+                        <span>Min Words: {(activePart as any).nestedParts[activeWritingTab]?.minWords || 150}</span>
+                        <span>Suggested Time: {(activePart as any).nestedParts[activeWritingTab]?.suggestedMinutes || 20}m</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-line">
-                    {activePart?.prompt}
-                  </p>
-                  <div className="flex gap-4 text-[10px] text-slate-500 font-bold uppercase pt-2">
-                    <span>Min Words: {activePart?.minWords || 250}</span>
-                    <span>Suggested Time: {activePart?.suggestedMinutes || 40}m</span>
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-line">
+                      {activePart?.prompt}
+                    </p>
+                    <div className="flex gap-4 text-[10px] text-slate-500 font-bold uppercase pt-2">
+                      <span>Min Words: {activePart?.minWords || 250}</span>
+                      <span>Suggested Time: {activePart?.suggestedMinutes || 40}m</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+
+              {/* Right side: Editor */}
+              <div className="pane-right flex flex-col bg-slate-50 p-6">
+                {(activePart as any).isNested ? (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs font-bold text-slate-500 uppercase">Writing Editor: {(activePart as any).nestedParts[activeWritingTab]?.title}</span>
+                      <span className="text-xs font-bold text-slate-900 bg-slate-200/80 px-2 py-0.5 rounded-full">
+                        Words: {getWordCount(store.writingAnswers[(activePart as any).nestedParts[activeWritingTab]?.id])}
+                      </span>
+                    </div>
+
+                    <textarea
+                      key={(activePart as any).nestedParts[activeWritingTab]?.id}
+                      placeholder="Start typing your response here..."
+                      value={store.writingAnswers[(activePart as any).nestedParts[activeWritingTab]?.id] || ''}
+                      onChange={(e) => handleWritingAnswerChange((activePart as any).nestedParts[activeWritingTab]?.id, e.target.value)}
+                      className="flex-1 w-full p-4 bg-white border border-slate-300 rounded-xl resize-none text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm leading-relaxed"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs font-bold text-slate-500 uppercase">Writing Editor: Task 2</span>
+                      <span className="text-xs font-bold text-slate-900 bg-slate-200/80 px-2 py-0.5 rounded-full">
+                        Words: {getWordCount(store.writingAnswers[activePart.id])}
+                      </span>
+                    </div>
+
+                    <textarea
+                      placeholder="Start typing your essay here..."
+                      value={store.writingAnswers[activePart.id] || ''}
+                      onChange={(e) => handleWritingAnswerChange(activePart.id, e.target.value)}
+                      className="flex-1 w-full p-4 bg-white border border-slate-300 rounded-xl resize-none text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm leading-relaxed"
+                    />
+                  </>
+                )}
+              </div>
             </div>
+          )}
+        </TextAnnotator>
 
-            {/* Right side: Editor */}
-            <div className="pane-right flex flex-col bg-slate-50 p-6">
-              {(activePart as any).isNested ? (
-                <>
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-xs font-bold text-slate-500 uppercase">Writing Editor: {(activePart as any).nestedParts[activeWritingTab]?.title}</span>
-                    <span className="text-xs font-bold text-slate-900 bg-slate-200/80 px-2 py-0.5 rounded-full">
-                      Words: {getWordCount(store.writingAnswers[(activePart as any).nestedParts[activeWritingTab]?.id])}
-                    </span>
-                  </div>
+        {/* Bottom Navigator */}
+        <TestNavigator
+          parts={partLabels}
+          activePart={store.currentPartIndex}
+          onPartChange={handlePartChange}
+          answeredIds={answeredIds}
+          partQuestionRanges={partQuestionRanges}
+          onSubmit={handleConfirmSubmit}
+          onNext={store.currentPartIndex < activeParts.length - 1 ? handleNext : undefined}
+          onPrev={store.currentPartIndex > 0 ? handlePrev : undefined}
+        />
 
-                  <textarea
-                    key={(activePart as any).nestedParts[activeWritingTab]?.id}
-                    placeholder="Start typing your response here..."
-                    value={store.writingAnswers[(activePart as any).nestedParts[activeWritingTab]?.id] || ''}
-                    onChange={(e) => handleWritingAnswerChange((activePart as any).nestedParts[activeWritingTab]?.id, e.target.value)}
-                    className="flex-1 w-full p-4 bg-white border border-slate-300 rounded-xl resize-none text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm leading-relaxed"
-                  />
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-xs font-bold text-slate-500 uppercase">Writing Editor: Task 2</span>
-                    <span className="text-xs font-bold text-slate-900 bg-slate-200/80 px-2 py-0.5 rounded-full">
-                      Words: {getWordCount(store.writingAnswers[activePart.id])}
-                    </span>
-                  </div>
+        {/* Exit Confirmation Modal */}
+        {showExitModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
 
-                  <textarea
-                    placeholder="Start typing your essay here..."
-                    value={store.writingAnswers[activePart.id] || ''}
-                    onChange={(e) => handleWritingAnswerChange(activePart.id, e.target.value)}
-                    className="flex-1 w-full p-4 bg-white border border-slate-300 rounded-xl resize-none text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm leading-relaxed"
-                  />
-                </>
-              )}
+              <h4 className="text-lg font-bold text-slate-900 mb-2">Testdan Chiqish</h4>
+              <p className="text-slate-500 text-xs leading-relaxed mb-6">
+                Siz haqiqatan ham testdan chiqmoqchimisiz? Chiqsangiz, barcha kiritilgan javoblaringiz o'chiriladi va test bekor qilinadi.
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowExitModal(false)}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs"
+                >
+                  Orqaga qaytish
+                </button>
+                <button
+                  onClick={handleExit}
+                  className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition text-xs shadow-md"
+                >
+                  Chiqish
+                </button>
+              </div>
             </div>
           </div>
         )}
-      </TextAnnotator>
 
-      {/* Bottom Navigator */}
-      <TestNavigator
-        parts={partLabels}
-        activePart={store.currentPartIndex}
-        onPartChange={handlePartChange}
-        answeredIds={answeredIds}
-        partQuestionRanges={partQuestionRanges}
-        onSubmit={handleConfirmSubmit}
-        onNext={store.currentPartIndex < activeParts.length - 1 ? handleNext : undefined}
-        onPrev={store.currentPartIndex > 0 ? handlePrev : undefined}
-      />
+        {/* Submit Confirmation Modal — Final Exam (Writing only) */}
+        {showSubmitModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
+              <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4 text-emerald-600">
+                <CheckCircle className="w-6 h-6" />
+              </div>
 
-      {/* Exit Confirmation Modal */}
-      {showExitModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
-            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
+              <h4 className="text-lg font-bold text-slate-900 mb-2">Imtihonni Yakunlash</h4>
+              <p className="text-slate-500 text-xs leading-relaxed mb-6">
+                Siz haqiqatan ham imtihonni yakunlab, javoblarni yubormoqchimisiz? Ushbu amalni ortga qaytarib bo'lmaydi.
+              </p>
 
-            <h4 className="text-lg font-bold text-slate-900 mb-2">Testdan Chiqish</h4>
-            <p className="text-slate-500 text-xs leading-relaxed mb-6">
-              Siz haqiqatan ham testdan chiqmoqchimisiz? Chiqsangiz, barcha kiritilgan javoblaringiz o'chiriladi va test bekor qilinadi.
-            </p>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowExitModal(false)}
-                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs"
-              >
-                Orqaga qaytish
-              </button>
-              <button
-                onClick={handleExit}
-                className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition text-xs shadow-md"
-              >
-                Chiqish
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSubmitModal(false)}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs border border-slate-200"
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSubmitModal(false);
+                    handleSubmitExam();
+                  }}
+                  className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold cursor-pointer rounded-lg transition text-xs shadow-md"
+                >
+                  Topshirish
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Submit Confirmation Modal — Final Exam (Writing only) */}
-      {showSubmitModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
-            <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4 text-emerald-600">
-              <CheckCircle className="w-6 h-6" />
-            </div>
+        {/* Section Transition Modal — Listening→Reading, Reading→Writing */}
+        {showSectionModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                <ChevronRight className="w-6 h-6" />
+              </div>
 
-            <h4 className="text-lg font-bold text-slate-900 mb-2">Imtihonni Yakunlash</h4>
-            <p className="text-slate-500 text-xs leading-relaxed mb-6">
-              Siz haqiqatan ham imtihonni yakunlab, javoblarni yubormoqchimisiz? Ushbu amalni ortga qaytarib bo'lmaydi.
-            </p>
+              <h4 className="text-lg font-bold text-slate-900 mb-2">
+                {store.currentSection === 'listening' ? 'Reading bo\'limiga o\'tish' : 'Writing bo\'limiga o\'tish'}
+              </h4>
+              <p className="text-slate-500 text-xs leading-relaxed mb-6">
+                {store.currentSection === 'listening'
+                  ? 'Listening bo\'limini yakunlab, Reading bo\'limiga o\'tmoqchimisiz? Ortga qaytib bo\'lmaydi.'
+                  : 'Reading bo\'limini yakunlab, Writing bo\'limiga o\'tmoqchimisiz? Ortga qaytib bo\'lmaydi.'
+                }
+              </p>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowSubmitModal(false)}
-                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs border border-slate-200"
-              >
-                Bekor qilish
-              </button>
-              <button
-                onClick={() => {
-                  setShowSubmitModal(false);
-                  handleSubmitExam();
-                }}
-                className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold cursor-pointer rounded-lg transition text-xs shadow-md"
-              >
-                Topshirish
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Section Transition Modal — Listening→Reading, Reading→Writing */}
-      {showSectionModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl relative border border-slate-200 text-center">
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
-              <ChevronRight className="w-6 h-6" />
-            </div>
-
-            <h4 className="text-lg font-bold text-slate-900 mb-2">
-              {store.currentSection === 'listening' ? 'Reading bo\'limiga o\'tish' : 'Writing bo\'limiga o\'tish'}
-            </h4>
-            <p className="text-slate-500 text-xs leading-relaxed mb-6">
-              {store.currentSection === 'listening'
-                ? 'Listening bo\'limini yakunlab, Reading bo\'limiga o\'tmoqchimisiz? Ortga qaytib bo\'lmaydi.'
-                : 'Reading bo\'limini yakunlab, Writing bo\'limiga o\'tmoqchimisiz? Ortga qaytib bo\'lmaydi.'
-              }
-            </p>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowSectionModal(false)}
-                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs border border-slate-200"
-              >
-                Bekor qilish
-              </button>
-              <button
-                onClick={handleSectionTransition}
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer rounded-lg transition text-xs shadow-md"
-              >
-                Davom etish
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSectionModal(false)}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg transition text-xs border border-slate-200"
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  onClick={handleSectionTransition}
+                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer rounded-lg transition text-xs shadow-md"
+                >
+                  Davom etish
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-      <NotesSidebar />
-    </div>
+        )}
+        <NotesSidebar />
+      </div>
     </NotesProvider>
   );
 }
