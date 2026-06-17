@@ -72,11 +72,6 @@ export default function LoginPage() {
               {loading ? 'Kirilmoqda...' : 'Admin Kirish'}
             </button>
 
-            <div className="mt-4 text-center">
-              <span className="text-slate-500 text-xs">
-                Standart admin paroli: <code className="text-slate-300">admincefr2026</code>
-              </span>
-            </div>
           </form>
       </div>
     </div>
