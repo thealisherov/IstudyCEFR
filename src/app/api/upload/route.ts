@@ -3,12 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 
 /**
  * POST /api/upload
- * Uploads a file (audio or image) to Supabase Storage.
- * Accepts multipart/form-data with:
- *   - file: File blob
+ * Generates a signed URL for client-side direct upload to Supabase Storage.
+ * Accepts JSON with:
+ *   - filename: string
  *   - folder: (optional) subfolder name, e.g. "audio" or "images"
+ *   - contentType: string
  *
- * Returns JSON: { url: string } — the public URL of the uploaded file.
+ * Returns JSON: { token: string, path: string, publicUrl: string }
  */
 
 const BUCKET_NAME = 'cefr-assets';
@@ -35,13 +36,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const formData = await request.formData();
-    const file = formData.get('file') as File | null;
-    const folder = (formData.get('folder') as string) || 'uploads';
+    const { filename, folder = 'uploads', contentType } = await request.json();
 
-    if (!file) {
+    if (!filename) {
       return NextResponse.json(
-        { error: 'Fayl tanlanmagan.' },
+        { error: 'Fayl nomi kiritilmagan.' },
         { status: 400 }
       );
     }
@@ -52,63 +51,47 @@ export async function POST(request: NextRequest) {
       'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
     ];
 
-    if (!allowedTypes.includes(file.type)) {
+    if (contentType && !allowedTypes.includes(contentType)) {
       return NextResponse.json(
-        { error: `Ruxsat etilmagan fayl turi: ${file.type}. Faqat audio va rasm fayllari qabul qilinadi.` },
-        { status: 400 }
-      );
-    }
-
-    // Validate file size (max 50MB)
-    const MAX_SIZE = 50 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      return NextResponse.json(
-        { error: 'Fayl hajmi 50MB dan oshmasligi kerak.' },
+        { error: `Ruxsat etilmagan fayl turi: ${contentType}. Faqat audio va rasm fayllari qabul qilinadi.` },
         { status: 400 }
       );
     }
 
     // Generate unique file path
     const timestamp = Date.now();
-    const sanitizedName = file.name
+    const sanitizedName = filename
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .toLowerCase();
     const filePath = `${folder}/${timestamp}_${sanitizedName}`;
 
-    // Read file as ArrayBuffer
-    const arrayBuffer = await file.arrayBuffer();
-
-    // Upload to Supabase Storage
-    const { error: uploadError } = await supabase.storage
+    // Create signed upload URL
+    const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
-      .upload(filePath, arrayBuffer, {
-        contentType: file.type,
-        upsert: false,
-      });
+      .createSignedUploadUrl(filePath);
 
-    if (uploadError) {
-      console.error('Supabase Storage Upload Error:', uploadError);
+    if (error || !data) {
+      console.error('Signed URL Error:', error);
       return NextResponse.json(
-        { error: `Yuklashda xatolik: ${uploadError.message}` },
+        { error: `URL yaratishda xatolik: ${error?.message || 'Noma\'lum'}` },
         { status: 500 }
       );
     }
 
-    // Build public URL
+    // Build public URL string beforehand
     const { data: publicUrlData } = supabase.storage
       .from(BUCKET_NAME)
       .getPublicUrl(filePath);
 
     return NextResponse.json({
-      url: publicUrlData?.publicUrl || '',
-      key: filePath,
-      size: file.size,
-      type: file.type,
+      token: data.token,
+      path: filePath,
+      publicUrl: publicUrlData?.publicUrl || '',
     });
   } catch (error: any) {
-    console.error('Upload Error:', error);
+    console.error('Upload Route Error:', error);
     return NextResponse.json(
-      { error: `Yuklashda xatolik: ${error.message || 'Noma\'lum xatolik'}` },
+      { error: `So'rovda xatolik: ${error.message || 'Noma\'lum xatolik'}` },
       { status: 500 }
     );
   }

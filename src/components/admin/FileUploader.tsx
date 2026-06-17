@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, CheckCircle, Loader2, Music, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import { getSupabaseClient } from '@/lib/supabase';
 
 interface FileUploaderProps {
   value?: string;
@@ -42,28 +43,42 @@ export default function FileUploader({
     setProgress(10);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('folder', folder);
-
-      setProgress(30);
-
-      const res = await fetch('/api/upload', {
+      // 1. Get signed upload URL from our API route
+      const initRes = await fetch('/api/upload', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          folder: folder,
+          contentType: file.type,
+        }),
       });
 
-      setProgress(80);
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Yuklashda xatolik');
+      if (!initRes.ok) {
+        const err = await initRes.json();
+        throw new Error(err.error || 'Yuklashni boshlashda xatolik');
       }
 
-      const data = await res.json();
+      const { token, path, publicUrl } = await initRes.json();
+      setProgress(30);
+
+      // 2. Upload directly to Supabase using the signed URL
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        throw new Error('Supabase client sozlanmagan');
+      }
+
+      const { error: uploadError } = await supabase.storage
+        .from('cefr-assets')
+        .uploadToSignedUrl(path, token, file);
+
+      if (uploadError) {
+        throw new Error(uploadError.message || 'Faylni yuklashda xatolik yuz berdi');
+      }
+
       setProgress(100);
-      setManualUrl(data.url);
-      onUpload(data.url);
+      setManualUrl(publicUrl);
+      onUpload(publicUrl);
       toast.success(`${isAudio ? 'Audio' : 'Rasm'} muvaffaqiyatli yuklandi!`);
     } catch (error: any) {
       toast.error(error.message || 'Fayl yuklashda xatolik yuz berdi.');
