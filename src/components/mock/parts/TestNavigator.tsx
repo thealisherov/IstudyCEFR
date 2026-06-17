@@ -86,7 +86,7 @@ const TestNavigator: React.FC<TestNavigatorProps> = ({
       <div
         className="fixed bottom-0 left-0 right-0 h-14 flex items-stretch select-none"
         style={{
-          zIndex: 40, background: 'var(--test-nav-bg, #ffffff)', color: 'var(--test-nav-fg, #111111)',
+          zIndex: 40, background: 'var(--test-header-bg, #ffffff)', color: 'var(--test-header-fg, #111111)',
           borderTop: '1px solid var(--test-border, #d1d5db)',
         }}
       >
@@ -101,7 +101,7 @@ const TestNavigator: React.FC<TestNavigatorProps> = ({
                 className="flex-1 flex items-center gap-2 px-4 overflow-hidden"
                 style={{ borderRight: '1px solid var(--test-border, #d1d5db)' }}
               >
-                <span className="font-bold text-[13px] whitespace-nowrap mr-3 shrink-0" style={{ color: 'var(--test-nav-fg, #111111)' }}>
+                <span className="font-bold text-[13px] whitespace-nowrap mr-3 shrink-0" style={{ color: 'var(--test-header-fg, #111111)' }}>
                   {label}
                 </span>
 
@@ -117,7 +117,7 @@ const TestNavigator: React.FC<TestNavigatorProps> = ({
                         className={`flex items-center justify-center min-w-[28px] h-[42px] px-1 text-[16px] font-semibold shrink-0 outline-none cursor-pointer transition-colors`}
                         style={{
                           border: isCurrent ? '2px solid #2563eb' : `1px solid var(--test-border, #d1d5db)`,
-                          background: isCurrent ? 'var(--test-bg, #ffffff)' : isAnswered ? '#dbeafe' : 'var(--test-bg, #ffffff)',
+                          background: isCurrent ? 'var(--test-bg, #ffffff)' : isAnswered ? 'rgba(37, 99, 235, 0.15)' : 'var(--test-bg, #ffffff)',
                           color: isCurrent ? '#2563eb' : 'var(--test-fg, #111111)',
                         }}
                       >
@@ -141,8 +141,8 @@ const TestNavigator: React.FC<TestNavigatorProps> = ({
               className={`flex-1 flex items-center justify-center gap-2 transition-colors outline-none ${disableDirectPartChange ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
                 }`}
               style={{
-                borderRight: '1px solid var(--test-border, #d1d5db)', background: 'var(--test-nav-bg, #ffffff)',
-                color: 'var(--test-nav-fg, #111111)',
+                borderRight: '1px solid var(--test-border, #d1d5db)', background: 'var(--test-header-bg, #ffffff)',
+                color: 'var(--test-header-fg, #111111)',
               }}
             >
               <span className="font-bold text-[13px] opacity-60 whitespace-nowrap">{label}</span>
@@ -157,7 +157,8 @@ const TestNavigator: React.FC<TestNavigatorProps> = ({
               onClick={onSubmit}
               className="flex items-center justify-center w-9 h-9 border rounded border-gray-300 hover:bg-gray-100 transition-colors outline-none"
               style={{
-                background: 'var(--test-nav-bg, #ffffff)', color: 'var(--test-nav-fg, #111111)',
+                background: 'var(--test-header-bg, #ffffff)', color: 'var(--test-header-fg, #111111)',
+                borderColor: 'var(--test-border, #d1d5db)'
               }}
             >
               <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">

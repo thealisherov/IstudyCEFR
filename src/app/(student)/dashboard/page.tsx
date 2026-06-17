@@ -8,6 +8,7 @@ import { useTestStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { BookOpen, LogOut, Clock, Layers, User, Award, CheckCircle } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import Image from 'next/image';
 
 export default function StudentDashboard() {
   const router = useRouter();
@@ -56,11 +57,9 @@ export default function StudentDashboard() {
       <header className="bg-slate-900 text-white border-b border-slate-800 py-4 px-6 sticky top-0 z-30 shadow-md">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <BookOpen className="w-6 h-6 text-white" />
-            </div>
+            <Image src="/istudylogo1.png" alt="iSTUDY Logo" width={36} height={36} className="rounded-lg object-contain" />
             <div>
-              <h1 className="text-xl font-extrabold tracking-tight">CEFR Mock Exam</h1>
+              <h1 className="text-xl font-extrabold tracking-tight">iSTUDY Mock Exam</h1>
               <p className="text-slate-400 text-xs">Student Testing Portal</p>
             </div>
           </div>
@@ -78,16 +77,7 @@ export default function StudentDashboard() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-6 md:p-8">
-        <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white rounded-3xl p-8 shadow-xl mb-10 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
-          <div className="relative z-10 max-w-2xl">
-            <span className="bg-blue-500/30 text-blue-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">CEFR Tizimi</span>
-            <h2 className="text-3xl font-extrabold mt-3 mb-4 leading-tight">O'z bilim darajangizni CEFR tizimida tekshirib ko'ring</h2>
-            <p className="text-blue-100 text-base leading-relaxed">
-              Bu yerda siz Listening (Tinglab tushunish), Reading (O'qish) va Writing (Yozma nutq) bo'yicha imtihonlarni topshirishingiz va to'liq natijalarga ega bo'lishingiz mumkin. Natijangiz rasmiy CEFR baholash tizimi asosida hisoblab beriladi.
-            </p>
-          </div>
-        </div>
+      
 
         <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-2">
           <Layers className="w-5 h-5 text-blue-600" />

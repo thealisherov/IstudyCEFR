@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, BookOpen, GraduationCap, ShieldCheck } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -10,10 +11,8 @@ export default function Home() {
       <nav className="border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-950/50 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2 font-black text-xl tracking-tight text-slate-900 dark:text-white">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
-            CEFR<span className="text-indigo-600 dark:text-indigo-400">Mock</span>
+            <Image src="/istudylogo1.png" alt="iSTUDY Logo" width={32} height={32} className="rounded-lg object-contain" />
+            iSTUDY<span className="text-indigo-600 dark:text-indigo-400">Mock</span>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -30,13 +29,7 @@ export default function Home() {
 
       {/* Hero Section */}
       <main className="max-w-7xl mx-auto px-6 pt-24 pb-32 flex flex-col items-center text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-bold uppercase tracking-wider mb-8">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-          </span>
-          Platforma to'liq ishga tushdi
-        </div>
+      
         
         <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-br from-slate-900 via-slate-700 to-slate-500 dark:from-white dark:via-slate-200 dark:to-slate-500 tracking-tight leading-tight max-w-4xl mb-6">
           Haqiqiy CEFR Imtihoni <br className="hidden md:block"/> Muhitini His Qiling

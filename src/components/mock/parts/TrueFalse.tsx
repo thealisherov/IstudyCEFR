@@ -11,6 +11,7 @@ interface Question {
 interface TrueFalseProps {
   data: {
     id: string;
+    type?: string;
     optionDescriptions?: string[];
     hasPerQuestionOptions?: boolean;
     options?: string[];
@@ -52,9 +53,17 @@ const TrueFalse: React.FC<TrueFalseProps> = ({ data, onAnswer, startIndex = 1, u
           const selected = userAnswers[questionId];
 
           const usePerQuestionOptions = data.hasPerQuestionOptions && q.fullOptions;
-          const displayOptions = usePerQuestionOptions
+          let displayOptions = usePerQuestionOptions
             ? (q.fullOptions || [])
             : (data.options || []);
+            
+          if (!displayOptions || displayOptions.length === 0) {
+             if (data.type === 'yn_ng') {
+               displayOptions = ['YES', 'NO', 'NOT GIVEN'];
+             } else {
+               displayOptions = ['TRUE', 'FALSE', 'NO INFORMATION'];
+             }
+          }
 
           return (
             <div key={q.id || questionId} id={`question-${globalNum}`}>

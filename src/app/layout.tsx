@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "CEFR Mock Exam Platform — Professional Prep",
+  title: "iSTUDY Mock Exam Platform — Professional Prep",
   description: "A premium full-stack CEFR mock testing platform. Practice Listening, Reading, and Writing sections under real exam conditions.",
   keywords: ["CEFR", "Mock Exam", "IELTS", "English Practice", "Listening", "Reading", "Writing"],
 };

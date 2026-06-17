@@ -78,10 +78,10 @@ const MatchDropdown: React.FC<MatchDropdownProps> = ({
               List of Options
             </span>
           </div>
-          <div className="px-5 py-4 bg-white grid grid-cols-1 gap-2">
+          <div className="px-5 py-4 grid grid-cols-1 gap-2" style={{ backgroundColor: 'var(--test-bg)' }}>
             {fullOptions.map(({ letter, desc }) => (
-              <div key={letter} className="flex items-center gap-3 text-sm text-slate-700">
-                <span className="shrink-0 w-6 h-6 rounded bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-800">
+              <div key={letter} className="flex items-center gap-3 text-sm" style={{ color: 'var(--test-fg)' }}>
+                <span className="shrink-0 w-6 h-6 rounded border flex items-center justify-center text-xs font-bold" style={{ backgroundColor: 'var(--test-bg)', borderColor: 'var(--test-border)', color: 'var(--test-fg)' }}>
                   {letter}
                 </span>
                 <span>{desc || letter}</span>
@@ -104,7 +104,8 @@ const MatchDropdown: React.FC<MatchDropdownProps> = ({
             <div
               key={q.id || questionId}
               id={`question-${globalNum}`}
-              className="flex items-center gap-4 py-2.5 px-3 rounded-xl hover:bg-slate-50 transition-colors"
+              className={`flex items-center gap-4 py-2.5 px-3 rounded-xl transition-colors relative ${isOpen ? '' : 'hover:bg-slate-50/50'}`}
+              style={{ zIndex: isOpen ? 9999 : 10 }}
             >
               {/* Number badge */}
               <span className="shrink-0 inline-flex items-center justify-center w-[2em] h-[2em] border border-gray-800 text-gray-900 font-bold bg-white select-none" style={{ fontSize: '1.1em' }}>
@@ -118,36 +119,37 @@ const MatchDropdown: React.FC<MatchDropdownProps> = ({
               />
 
               {/* Dropdown */}
-              <div className="relative shrink-0">
+              <div className={`relative shrink-0 ${isOpen ? 'z-[100]' : 'z-10'}`}>
                 <button
                   onClick={() => setOpenDropdown(prev => prev === questionId ? null : questionId)}
-                  className={`flex items-center gap-2 h-9 px-3 rounded-lg border text-sm font-medium transition-all ${
-                    selected
-                      ? 'border-blue-500 bg-blue-50 text-blue-800'
-                      : 'border-slate-300 bg-white text-slate-400 hover:border-slate-400'
-                  }`}
-                  style={{ minWidth: '200px' }}
+                  className="flex items-center gap-2 h-9 px-3 rounded-lg border text-sm font-medium transition-all"
+                  style={{ 
+                    minWidth: '200px',
+                    backgroundColor: selected ? 'rgba(59, 130, 246, 0.15)' : 'var(--test-bg)',
+                    borderColor: selected ? '#3b82f6' : 'var(--test-border)',
+                    color: selected ? '#2563eb' : 'var(--test-fg)'
+                  }}
                 >
                   {selected ? (
                     <span className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="shrink-0 w-5 h-5 rounded bg-blue-600 text-white text-[10px] font-extrabold flex items-center justify-center">
                         {selected}
                       </span>
-                      <span className="truncate text-xs text-blue-800">
+                      <span className="truncate text-xs font-bold" style={{ color: '#2563eb' }}>
                         {selectedFull?.desc || selected}
                       </span>
                     </span>
                   ) : (
-                    <span className="flex-1 text-xs text-left">Select an option</span>
+                    <span className="flex-1 text-xs text-left" style={{ opacity: 0.6 }}>Select an option</span>
                   )}
-                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${isOpen ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-150 ${isOpen ? 'rotate-180' : ''}`} style={{ opacity: 0.5 }} />
                 </button>
 
                 {/* Dropdown panel */}
                 {isOpen && (
                   <div
-                    className="absolute right-0 top-full mt-1.5 z-50 rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
-                    style={{ minWidth: '360px' }}
+                    className="absolute right-0 top-full mt-1.5 z-50 rounded-xl shadow-2xl overflow-hidden"
+                    style={{ minWidth: '360px', backgroundColor: 'var(--test-bg)', borderColor: 'var(--test-border)', borderWidth: '1px' }}
                   >
                     {fullOptions.map(({ letter, desc }) => {
                       const isSel = selected === letter;
@@ -155,13 +157,25 @@ const MatchDropdown: React.FC<MatchDropdownProps> = ({
                         <div
                           key={letter}
                           onClick={() => handleSelect(questionId, letter)}
-                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer text-sm transition-colors ${
-                            isSel ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
+                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer text-sm transition-colors`}
+                          style={{
+                            backgroundColor: isSel ? 'rgba(37, 99, 235, 1)' : 'transparent',
+                            color: isSel ? '#fff' : 'var(--test-fg)',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSel) e.currentTarget.style.backgroundColor = 'rgba(128, 128, 128, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSel) e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
                         >
-                          <span className={`shrink-0 w-6 h-6 rounded text-[11px] font-extrabold flex items-center justify-center ${
-                            isSel ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-                          }`}>
+                          <span className={`shrink-0 w-6 h-6 rounded border text-[11px] font-extrabold flex items-center justify-center`}
+                            style={{
+                              backgroundColor: isSel ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
+                              borderColor: isSel ? 'transparent' : 'var(--test-border)',
+                              color: isSel ? '#fff' : 'var(--test-fg)'
+                            }}
+                          >
                             {letter}
                           </span>
                           <span className="flex-1">{desc || letter}</span>

@@ -20,7 +20,7 @@ const LISTENING_SCORE_MAP: Record<number, number> = {
   15: 48,
   16: 50,
   17: 51,
-  18: 53, // interpolated
+  18: 53,
   19: 54,
   20: 55,
   21: 57,
@@ -59,7 +59,7 @@ const READING_SCORE_MAP: Record<number, number> = {
   15: 48,
   16: 49,
   17: 51,
-  18: 53, // interpolated
+  18: 52,
   19: 54,
   20: 55,
   21: 57,

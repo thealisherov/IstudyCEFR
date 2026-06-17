@@ -2,13 +2,15 @@
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { useTestStore } from '@/lib/store';
+import { useShallow } from 'zustand/react/shallow';
 import { getTestById, saveSubmission, getSubmissions } from '@/lib/db';
 import { calculateSectionScore } from '@/lib/scoring';
 import { Submission, TestPart, SectionType } from '@/types/test';
 import { toast } from 'sonner';
 import confetti from 'canvas-confetti';
-import { Clock, AlertTriangle, CheckCircle, Home, FileText, ChevronRight, ChevronsLeftRight } from 'lucide-react';
+import { Clock, AlertTriangle, CheckCircle, Home, FileText, ChevronRight, ChevronsLeftRight, Play, Pause, Volume2, Menu, X, Check, LogOut, Wifi, Bell, Quote, Send, ZoomIn, ChevronLeft } from 'lucide-react';
 
 // Import the design components
 import TrueFalse from '@/components/mock/parts/TrueFalse';
@@ -21,15 +23,344 @@ import { NotesProvider } from '@/components/mock/notes/NotesProvider';
 import TextAnnotator from '@/components/mock/notes/TextAnnotator';
 import NotesSidebar from '@/components/mock/notes/NotesSidebar';
 
+const formatTime = (seconds: number) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+const TimerDisplay = () => {
+  const remainingTime = useTestStore((state) => state.remainingTime);
+  return (
+    <div className="flex items-center gap-2.5 font-mono text-base px-3.5 py-1.5 rounded-xl font-bold bg-slate-100/80 dark:bg-slate-800/80" style={{ color: 'var(--test-header-fg)' }}>
+      <div className="w-2 h-2 rounded-full bg-slate-400" />
+      <span className="tracking-widest">{formatTime(remainingTime)}</span>
+    </div>
+  );
+};
+
+const BreakScreenTimer = () => {
+  const remainingTime = useTestStore((state) => state.remainingTime);
+  return (
+    <div className="text-6xl font-black text-indigo-600 tracking-tighter tabular-nums mb-8">
+      {formatTime(remainingTime)}
+    </div>
+  );
+};
+
+const AudioPlayer = () => {
+  const test = useTestStore((state) => state.test);
+  const currentSection = useTestStore((state) => state.currentSection);
+  const audioUrl = test?.listeningAudioUrl;
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (currentSection !== 'listening' || !audioUrl || !audioRef.current) return;
+    
+    const audio = audioRef.current;
+    let isUnmounting = false;
+
+    const playAudio = () => {
+      if (isUnmounting) return;
+      audio.play().catch(e => console.warn("Autoplay prevented:", e));
+    };
+
+    // Auto-start audio immediately
+    playAudio();
+
+    // Intercept and prevent browser's global media controls (Media Session API)
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Listening Test',
+        artist: 'iSTUDY Mock Exam',
+        album: 'Do Not Pause',
+      });
+      navigator.mediaSession.setActionHandler('pause', () => playAudio()); // Force play
+      navigator.mediaSession.setActionHandler('play', () => playAudio());
+      navigator.mediaSession.setActionHandler('seekbackward', () => {}); // Prevent seek
+      navigator.mediaSession.setActionHandler('seekforward', () => {}); // Prevent seek
+      navigator.mediaSession.setActionHandler('seekto', () => {}); // Prevent seek
+    }
+
+    // Forcefully resume if user or extension attempts to pause via DOM
+    const handlePause = () => {
+      if (!isUnmounting && !audio.ended) {
+        playAudio();
+      }
+    };
+
+    audio.addEventListener('pause', handlePause);
+
+    return () => {
+      isUnmounting = true;
+      audio.removeEventListener('pause', handlePause);
+      audio.pause();
+      audio.src = '';
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('seekbackward', null);
+        navigator.mediaSession.setActionHandler('seekforward', null);
+        navigator.mediaSession.setActionHandler('seekto', null);
+      }
+    };
+  }, [currentSection, audioUrl]);
+
+  if (currentSection !== 'listening' || !audioUrl) return null;
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1 pointer-events-none select-none">
+      <audio 
+        ref={audioRef} 
+        src={audioUrl} 
+        controlsList="nodownload nofullscreen noremoteplayback" 
+      />
+      <Volume2 className="w-6 h-6 animate-pulse" style={{ color: 'var(--test-header-fg)', opacity: 0.8 }} />
+    </div>
+  );
+};
+
+const SettingsMenu = ({ 
+  theme, setTheme, 
+  textSize, setTextSize,
+  onExit,
+  onSubmit
+}: {
+  theme: 'black-on-white' | 'white-on-black' | 'yellow-on-black';
+  setTheme: (t: any) => void;
+  textSize: 'regular' | 'large' | 'xl';
+  setTextSize: (s: any) => void;
+  onExit: () => void;
+  onSubmit?: () => void;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [view, setView] = useState<'main' | 'contrast' | 'text-size'>('main');
+
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+        setTimeout(() => setView('main'), 200);
+      }
+    };
+    if (isOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [isOpen]);
+
+  return (
+    <>
+      <button 
+        onClick={() => setIsOpen(true)}
+        className="flex items-center justify-center transition hover:opacity-70"
+        style={{ color: 'var(--test-header-fg)' }}
+      >
+        <Menu className="w-7 h-7" strokeWidth={2} />
+      </button>
+
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 font-sans ignore-theme">
+          <div 
+            className="rounded-xl shadow-2xl w-full max-w-[500px] overflow-hidden flex flex-col border"
+            style={{ backgroundColor: 'var(--test-bg)', color: 'var(--test-fg)', borderColor: 'var(--test-border)' }}
+          >
+            
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b relative" style={{ borderColor: 'var(--test-border)' }}>
+              {view !== 'main' && (
+                <button 
+                  onClick={() => setView('main')} 
+                  className="absolute left-6 flex items-center gap-1 opacity-70 hover:opacity-100 font-medium"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                  <span className="text-sm">Back</span>
+                </button>
+              )}
+              <h2 className="text-xl font-medium text-center w-full">{view === 'main' ? 'Options' : view === 'contrast' ? 'Contrast' : 'Text size'}</h2>
+              <button onClick={() => { setIsOpen(false); setView('main'); }} className="absolute right-6 opacity-70 hover:opacity-100 transition">
+                <X className="w-6 h-6" strokeWidth={1.5} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-8">
+              {view === 'main' && (
+                <div className="space-y-6">
+                  <button 
+                    onClick={() => { setIsOpen(false); if(onSubmit) onSubmit(); }}
+                    className="w-full flex items-center justify-between bg-[#c8102e] hover:bg-[#a50d26] text-white p-4 rounded-lg font-medium transition"
+                  >
+                    <div className="flex items-center gap-4">
+                      <Send className="w-5 h-5" />
+                      <span>Go to submission page</span>
+                    </div>
+                    <ChevronRight className="w-5 h-5 opacity-80" />
+                  </button>
+
+                  <div className="border rounded-lg shadow-sm" style={{ borderColor: 'var(--test-border)' }}>
+                    <button 
+                      onClick={() => setView('contrast')} 
+                      className="w-full flex items-center justify-between p-4 border-b transition hover:opacity-70"
+                      style={{ borderColor: 'var(--test-border)' }}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-5 h-5 rounded-full border-2 border-slate-400 bg-gradient-to-r from-black to-white" />
+                        <span className="font-medium">Contrast</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 opacity-50" />
+                    </button>
+                    <button 
+                      onClick={() => setView('text-size')} 
+                      className="w-full flex items-center justify-between p-4 transition hover:opacity-70"
+                    >
+                      <div className="flex items-center gap-4">
+                        <ZoomIn className="w-5 h-5 opacity-70" />
+                        <span className="font-medium">Text size</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 opacity-50" />
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={() => { setIsOpen(false); onExit(); }}
+                    className="w-full flex items-center justify-center gap-3 p-4 border border-[#c8102e] text-[#c8102e] rounded-lg hover:bg-[#c8102e] hover:text-white transition font-bold"
+                  >
+                    <LogOut className="w-5 h-5" />
+                    Exit test
+                  </button>
+                </div>
+              )}
+
+              {view === 'contrast' && (
+                <div className="flex flex-col space-y-3">
+                  {[
+                    { id: 'black-on-white', label: 'Black on white' },
+                    { id: 'white-on-black', label: 'White on black' },
+                    { id: 'yellow-on-black', label: 'Yellow on black' }
+                  ].map(opt => (
+                    <button 
+                      key={opt.id}
+                      onClick={() => setTheme(opt.id as any)}
+                      className="flex items-center gap-4 px-5 py-4 rounded-lg text-lg font-medium transition border"
+                      style={{
+                        borderColor: theme === opt.id ? 'var(--test-fg)' : 'transparent',
+                        backgroundColor: theme === opt.id ? 'rgba(128,128,128,0.1)' : 'transparent'
+                      }}
+                    >
+                      <div className="w-6 flex justify-center">{theme === opt.id && <Check className="w-5 h-5" />}</div>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {view === 'text-size' && (
+                <div className="flex flex-col space-y-3">
+                  {[
+                    { id: 'regular', label: 'Regular' },
+                    { id: 'large', label: 'Large' },
+                    { id: 'xl', label: 'Extra large' }
+                  ].map(opt => (
+                    <button 
+                      key={opt.id}
+                      onClick={() => setTextSize(opt.id as any)}
+                      className="flex items-center gap-4 px-5 py-4 rounded-lg text-lg font-medium transition border"
+                      style={{
+                        borderColor: textSize === opt.id ? 'var(--test-fg)' : 'transparent',
+                        backgroundColor: textSize === opt.id ? 'rgba(128,128,128,0.1)' : 'transparent'
+                      }}
+                    >
+                      <div className="w-6 flex justify-center">{textSize === opt.id && <Check className="w-5 h-5" />}</div>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 export default function TestPage() {
   const { testId } = useParams() as { testId: string };
   const router = useRouter();
-  const store = useTestStore();
+  const store = useTestStore(
+    useShallow((s) => ({
+      isTestStarted: s.isTestStarted,
+      isTestSubmitted: s.isTestSubmitted,
+      isBreak: s.isBreak,
+      currentSection: s.currentSection,
+      currentPartIndex: s.currentPartIndex,
+      test: s.test,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      answers: s.answers,
+      writingAnswers: s.writingAnswers,
+      isPractice: s.isPractice,
+      practiceSection: s.practiceSection,
+      practicePartIndex: s.practicePartIndex,
+      loadSavedState: s.loadSavedState,
+      startTest: s.startTest,
+      tickTimer: s.tickTimer,
+      setAnswer: s.setAnswer,
+      setWritingAnswer: s.setWritingAnswer,
+      setCurrentPartIndex: s.setCurrentPartIndex,
+      goToNextPart: s.goToNextPart,
+      goToPrevPart: s.goToPrevPart,
+      goToNextSection: s.goToNextSection,
+      submitTest: s.submitTest,
+      exitTest: s.exitTest,
+    }))
+  );
 
   const [loading, setLoading] = useState(true);
   const [showExitModal, setShowExitModal] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showSectionModal, setShowSectionModal] = useState(false);
+
+  const [theme, setTheme] = useState<'black-on-white' | 'white-on-black' | 'yellow-on-black'>('black-on-white');
+  const [textSize, setTextSize] = useState<'regular' | 'large' | 'xl'>('regular');
+
+  useEffect(() => {
+    if (textSize === 'regular') document.documentElement.style.fontSize = '18px';
+    if (textSize === 'large') document.documentElement.style.fontSize = '20px';
+    if (textSize === 'xl') document.documentElement.style.fontSize = '24px';
+    return () => { document.documentElement.style.fontSize = ''; }
+  }, [textSize]);
+
+  const themeVariables = useMemo(() => {
+    switch(theme) {
+      case 'white-on-black':
+        return {
+          '--test-bg': '#1a1a2e',
+          '--test-fg': '#edebfa',
+          '--test-header-bg': '#0f0f1a',
+          '--test-header-fg': '#ffffff',
+          '--test-border': '#42394f'
+        };
+      case 'yellow-on-black':
+        return {
+          '--test-bg': '#000000',
+          '--test-fg': '#d4a434',
+          '--test-header-bg': '#000000',
+          '--test-header-fg': '#d4a434',
+          '--test-border': '#d4a434'
+        };
+      case 'black-on-white':
+      default:
+        return {
+          '--test-bg': '#ffffff',
+          '--test-fg': '#1e1e2e',
+          '--test-header-bg': '#ffffff',
+          '--test-header-fg': '#111111',
+          '--test-border': '#dfdbe8'
+        };
+    }
+  }, [theme]);
 
   // Split-screen resizer state and logic
   const containerRef = useRef<HTMLDivElement>(null);
@@ -107,12 +438,7 @@ export default function TestPage() {
 
 
 
-  // Format MM:SS
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  // Timer formatting extracted globally
 
   // Compile active section parts
   const activeParts = useMemo(() => {
@@ -360,40 +686,15 @@ export default function TestPage() {
             </div>
 
             <h2 className="text-3xl font-extrabold text-slate-900 mb-2">Imtihon Muvaffaqiyatli Yakunlandi!</h2>
-            <p className="text-slate-500 mb-8">Natijalaringiz tizimga muvaffaqiyatli saqlandi. Quyida dastlabki natijalar bilan tanishing:</p>
+            <p className="text-slate-500 mb-8 text-lg">Natijalaringiz tizimga muvaffaqiyatli saqlandi.</p>
 
-            <div className="grid md:grid-cols-2 gap-4 mb-8">
-              {/* Listening Score */}
-              <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 text-left">
-                <span className="text-[11px] font-extrabold text-blue-700 uppercase tracking-wider">Listening</span>
-                <div className="mt-2">
-                  <p className="text-xs text-slate-500">CEFR Ball</p>
-                  <p className="text-3xl font-black text-blue-600">{lastSub?.listeningCEFR} <span className="text-xs text-slate-400 font-normal">/ 75</span></p>
-                </div>
-              </div>
-
-              {/* Reading Score */}
-              <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-5 text-left">
-                <span className="text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider">Reading</span>
-                <div className="mt-2">
-                  <p className="text-xs text-slate-500">CEFR Ball</p>
-                  <p className="text-3xl font-black text-emerald-600">{lastSub?.readingCEFR} <span className="text-xs text-slate-400 font-normal">/ 75</span></p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-left mb-6">
-              <span className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">Writing</span>
-              <p className="text-slate-600 text-xs mt-2 leading-relaxed">
-                Yozma nutq (Writing) bo'limi avtomatik baholanmaydi. Javoblaringiz admin tomonidan tekshirilgach, to'liq ballingiz e'lon qilinadi.
+            <div className="bg-indigo-50/80 border border-indigo-100 rounded-2xl p-8 text-center mt-6">
+              <p className="text-lg font-medium text-indigo-900 mb-2">
+                Sizning imtihon javoblaringiz ushbu telegram kanalga yuklanadi:
               </p>
-            </div>
-
-            <div className="bg-indigo-50/80 border border-indigo-100 rounded-2xl p-5 text-center mt-6">
-              <p className="text-sm font-semibold text-indigo-800">
-                Test natijalari telegram kanalimizga yuklanadi:
-                <a href="#" className="font-bold text-indigo-600 underline ml-1 hover:text-indigo-700">@SizningKanal</a>
-              </p>
+              <a href="#" className="inline-flex items-center gap-2 font-bold text-indigo-600 text-xl hover:text-indigo-700 transition">
+                @SizningKanal
+              </a>
             </div>
           </div>
         </main>
@@ -409,9 +710,7 @@ export default function TestPage() {
           <Clock className="w-16 h-16 text-indigo-500 mx-auto mb-6 animate-pulse" />
           <h2 className="text-3xl font-black text-slate-900 mb-2">Tanaffus</h2>
           <p className="text-slate-500 mb-8 font-medium">Iltimos, keyingi bo'lim boshlangunicha biroz dam oling.</p>
-          <div className="text-6xl font-black text-indigo-600 tracking-tighter tabular-nums mb-8">
-            {formatTime(store.remainingTime)}
-          </div>
+          <BreakScreenTimer />
         </div>
       </div>
     );
@@ -568,45 +867,89 @@ export default function TestPage() {
 
   return (
     <NotesProvider storageId={testId}>
+      <style>{`
+        #cefr-test-wrapper {
+          background-color: var(--test-bg);
+          color: var(--test-fg);
+        }
+        #cefr-test-wrapper .cefr-test-content .bg-white:not(.ignore-theme),
+        #cefr-test-wrapper .cefr-test-content .bg-slate-50:not(.ignore-theme),
+        #cefr-test-wrapper .cefr-test-content .bg-slate-100:not(.ignore-theme) {
+          background-color: transparent !important;
+        }
+        #cefr-test-wrapper .cefr-test-content .text-slate-900,
+        #cefr-test-wrapper .cefr-test-content .text-slate-800,
+        #cefr-test-wrapper .cefr-test-content .text-slate-700,
+        #cefr-test-wrapper .cefr-test-content .text-slate-600,
+        #cefr-test-wrapper .cefr-test-content .text-slate-500,
+        #cefr-test-wrapper .cefr-test-content .text-gray-900,
+        #cefr-test-wrapper .cefr-test-content .text-gray-800,
+        #cefr-test-wrapper .cefr-test-content .text-gray-700,
+        #cefr-test-wrapper .cefr-test-content .text-gray-600,
+        #cefr-test-wrapper .cefr-test-content .text-gray-500 {
+          color: var(--test-fg) !important;
+        }
+        #cefr-test-wrapper .cefr-test-content .border-slate-200,
+        #cefr-test-wrapper .cefr-test-content .border-slate-100,
+        #cefr-test-wrapper .cefr-test-content .border-gray-200,
+        #cefr-test-wrapper .cefr-test-content .border-gray-800,
+        #cefr-test-wrapper .cefr-test-content .border-gray-400 {
+          border-color: var(--test-border) !important;
+        }
+      `}</style>
       <div 
-        className="min-h-screen bg-white text-slate-900 font-sans flex flex-col justify-between overflow-hidden select-none"
-      style={{ colorScheme: 'light' }}
-    >
+        id="cefr-test-wrapper"
+        className="min-h-screen font-sans flex flex-col justify-between overflow-hidden select-none transition-colors duration-200"
+        style={{ ...themeVariables, colorScheme: theme === 'black-on-white' ? 'light' : 'dark' } as React.CSSProperties}
+      >
       {/* Header */}
-      <header className="fixed top-0 left-0 w-full bg-slate-900 text-white h-14 border-b border-slate-800 px-6 flex justify-between items-center z-50 select-none">
-        <div className="flex items-center gap-4">
-          <span className="font-extrabold text-sm text-blue-400">iSTUDY mock</span>
-          <span className="h-4 w-[1.5px] bg-slate-700"></span>
-          <span className="text-xs text-slate-300 font-semibold">{store.firstName} {store.lastName}</span>
+      <header 
+        className="fixed top-0 left-0 w-full h-22 border-b px-6 flex justify-between items-center z-50 select-none transition-colors duration-200"
+        style={{ backgroundColor: 'var(--test-header-bg)', color: 'var(--test-header-fg)', borderColor: 'var(--test-border)' }}
+      >
+        <div className="flex items-center gap-8">
+          <div className="flex items-center gap-3 font-extrabold text-2xl tracking-tight text-blue-500">
+            <Image src="/istudylogo1.png" alt="iSTUDY Logo" width={56} height={56} className="rounded object-contain" />
+            <span>iSTUDY<span className="ml-1" style={{ color: 'var(--test-header-fg)' }}>Mock</span></span>
+          </div>
+          <span className="h-8 w-[3px]" style={{ backgroundColor: 'var(--test-border)' }}></span>
+          <span className="text-xl font-semibold" style={{ color: 'var(--test-header-fg)' }}>{store.firstName} {store.lastName}</span>
         </div>
 
-        <div className="flex items-center gap-6">
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_NOTES_SIDEBAR'))}
-            className="flex items-center gap-1.5 text-xs font-semibold text-blue-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded border border-slate-700"
-          >
-            <FileText className="w-4 h-4" />
-            Eslatmalar
+        <div className="flex items-center gap-5">
+          <TimerDisplay />
+          <AudioPlayer />
+          
+          <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
+            <Wifi className="w-6 h-6" strokeWidth={2} />
           </button>
           
-          <div className="flex items-center gap-1.5 text-amber-400 font-mono text-sm bg-amber-950/20 px-3 py-1 rounded border border-amber-900/30">
-            <Clock className="w-4 h-4 animate-pulse" />
-            <span>{formatTime(store.remainingTime)}</span>
-          </div>
-
-          <button
-            onClick={() => setShowExitModal(true)}
-            className="text-xs font-semibold text-slate-400 hover:text-white transition bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded"
-          >
-            Chiqish
+          <button className="flex items-center justify-center transition hover:opacity-70" style={{ color: 'var(--test-header-fg)' }}>
+            <Bell className="w-6 h-6" strokeWidth={2} />
           </button>
+          
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_NOTES_SIDEBAR'))}
+            className="flex items-center justify-center transition hover:opacity-70"
+            style={{ color: 'var(--test-header-fg)' }}
+            title="Eslatmalar"
+          >
+            <Quote className="w-6 h-6" strokeWidth={2} />
+          </button>
+
+          <SettingsMenu 
+            theme={theme} setTheme={setTheme} 
+            textSize={textSize} setTextSize={setTextSize} 
+            onExit={() => setShowExitModal(true)} 
+            onSubmit={() => setShowSubmitModal(true)}
+          />
         </div>
       </header>
 
       {/* Content Area */}
       <TextAnnotator 
         containerId={`section_${store.currentSection}_part_${activePart?.id}`}
-        className="flex-1 overflow-hidden relative pt-14"
+        className="flex-1 overflow-hidden relative pt-16 cefr-test-content"
       >
         {store.currentSection === 'listening' && (
           <>
