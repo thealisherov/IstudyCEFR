@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { getTests } from '@/lib/db';
 import { Test, SectionType } from '@/types/test';
 import { useTestStore } from '@/lib/store';
+import { logoutStudent } from '@/lib/auth';
 import { toast } from 'sonner';
 import { BookOpen, LogOut, Clock, Layers, User, Award, CheckCircle } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -66,10 +67,14 @@ export default function StudentDashboard() {
           <div className="flex items-center gap-4">
             <ThemeToggle />
             <button
-              onClick={() => router.push('/admin/dashboard')}
-              className="text-slate-300 hover:text-white text-sm font-semibold transition bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl"
+              onClick={() => {
+                logoutStudent();
+                router.push('/student-login');
+              }}
+              className="text-slate-300 flex items-center gap-2 hover:text-red-400 text-sm font-semibold transition bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl"
             >
-              Admin Panel
+              <LogOut className="w-4 h-4" />
+              Chiqish
             </button>
           </div>
         </div>

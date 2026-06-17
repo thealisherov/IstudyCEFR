@@ -41,7 +41,7 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
           <Link 
-            href="/dashboard"
+            href="/student-login"
             className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-2xl font-bold text-lg transition shadow-[0_0_40px_-10px_rgba(79,70,229,0.5)] hover:shadow-[0_0_60px_-15px_rgba(79,70,229,0.7)] active:scale-[0.98]"
           >
             <BookOpen className="w-5 h-5" />
