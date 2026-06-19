@@ -340,32 +340,38 @@ export async function saveSharedSettings(settings: SharedSettings): Promise<void
 // =============================================
 // TESTS
 // =============================================
+
+/**
+ * Synchronous reader — only reads from localStorage cache.
+ * Returns cached Supabase data or empty array.
+ * Never seeds MOCK_TESTS when Supabase is configured.
+ */
 export function getTests(): Test[] {
-  if (typeof window === 'undefined') return MOCK_TESTS;
+  if (typeof window === 'undefined') return [];
 
   const stored = localStorage.getItem(TESTS_KEY);
   if (!stored) {
-    localStorage.setItem(TESTS_KEY, JSON.stringify(MOCK_TESTS));
-    // Trigger async Supabase sync
-    if (isSupabaseConfigured()) {
-      syncTestsFromSupabase();
+    // If Supabase is NOT configured, use seed data
+    if (!isSupabaseConfigured()) {
+      localStorage.setItem(TESTS_KEY, JSON.stringify(MOCK_TESTS));
+      return MOCK_TESTS;
     }
-    return MOCK_TESTS;
+    return []; // Wait for async fetch
   }
   try {
     return JSON.parse(stored);
   } catch {
-    return MOCK_TESTS;
+    return [];
   }
 }
 
 /**
- * Async version: fetch fresh tests from Supabase.
- * Components that need real-time data should call this.
+ * Async version: fetches from Supabase, caches to localStorage.
+ * This is the PRIMARY data loading method.
  */
 export async function getTestsAsync(): Promise<Test[]> {
   const supabase = getSupabaseClient();
-  if (!supabase) return getTests();
+  if (!supabase) return getTests(); // No Supabase — use localStorage/seed
 
   try {
     const { data, error } = await supabase
@@ -374,15 +380,17 @@ export async function getTestsAsync(): Promise<Test[]> {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    if (data && data.length > 0) {
+    if (data) {
       const tests = data.map(dbRowToTest);
+      // Cache to localStorage for faster subsequent loads
       localStorage.setItem(TESTS_KEY, JSON.stringify(tests));
       return tests;
     }
+    return []; // Supabase returned null data
   } catch {
-    // Fall back to localStorage
+    // Supabase error — return whatever is in localStorage cache
+    return getTests();
   }
-  return getTests();
 }
 
 async function syncTestsFromSupabase(): Promise<void> {

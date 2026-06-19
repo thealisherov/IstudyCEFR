@@ -18,16 +18,23 @@ export default function StudentDashboard() {
   
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Load cached tests immediately for instant UI
-    setTests(getTests().filter(t => t.isPublished));
+    const cached = getTests().filter(t => t.isPublished);
+    if (cached.length > 0) {
+      setTests(cached);
+      setLoading(false);
+    }
     
     // Then fetch fresh data from Supabase (for new sessions / other accounts)
     getTestsAsync().then(freshTests => {
       setTests(freshTests.filter(t => t.isPublished));
     }).catch(() => {
       // Already showing localStorage data, no action needed
+    }).finally(() => {
+      setLoading(false);
     });
   }, []);
 
@@ -97,7 +104,12 @@ export default function StudentDashboard() {
           Mavjud Mock Imtihonlari ({tests.length})
         </h3>
 
-        {tests.length === 0 ? (
+        {loading ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-12 text-center shadow-sm">
+            <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent mx-auto mb-4" />
+            <p className="text-slate-500 font-medium">Testlar yuklanmoqda...</p>
+          </div>
+        ) : tests.length === 0 ? (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-12 text-center shadow-sm">
             <Award className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500 font-medium">Hozirda faol mock testlar mavjud emas.</p>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getTests, saveTest, deleteTest } from '@/lib/db';
+import { getTests, getTestsAsync, saveTest, deleteTest } from '@/lib/db';
 import { Test } from '@/types/test';
 import { toast } from 'sonner';
 import { Plus, Edit2, Trash2, Eye, EyeOff, FileQuestion, Calendar, Clock } from 'lucide-react';
@@ -10,21 +10,37 @@ import { Plus, Edit2, Trash2, Eye, EyeOff, FileQuestion, Calendar, Clock } from 
 export default function AdminTests() {
   const router = useRouter();
   const [tests, setTests] = useState<Test[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { setTests(getTests()); }, []);
+  const loadTests = async () => {
+    const freshTests = await getTestsAsync();
+    setTests(freshTests);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // Show cached data instantly
+    const cached = getTests();
+    if (cached.length > 0) {
+      setTests(cached);
+      setLoading(false);
+    }
+    // Fetch fresh from Supabase
+    loadTests();
+  }, []);
 
   const handleTogglePublish = async (test: Test) => {
     const updated: Test = { ...test, isPublished: !test.isPublished };
     await saveTest(updated);
     toast.success(updated.isPublished ? 'Test nashr qilindi!' : 'Test nashrdan olindi.');
-    setTests(getTests());
+    await loadTests();
   };
 
   const handleDelete = async (id: string) => {
     if (window.confirm('Haqiqatan ham ushbu testni butunlay o\'chirib tashlamoqchimisiz?')) {
       await deleteTest(id);
       toast.success('Test o\'chirildi.');
-      setTests(getTests());
+      await loadTests();
     }
   };
 
@@ -43,7 +59,12 @@ export default function AdminTests() {
         </button>
       </div>
 
-      {tests.length === 0 ? (
+      {loading ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center text-slate-400 transition-colors">
+          <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-600 border-t-transparent mx-auto mb-4" />
+          <p className="font-semibold">Testlar yuklanmoqda...</p>
+        </div>
+      ) : tests.length === 0 ? (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center text-slate-400 transition-colors">
           <FileQuestion className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-4" />
           <p className="font-semibold">Hozircha hech qanday test yaratilmagan.</p>

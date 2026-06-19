@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getTests, getSubmissions } from '@/lib/db';
+import { getTests, getTestsAsync, getSubmissions, getSubmissionsAsync } from '@/lib/db';
 import { Test, Submission } from '@/types/test';
 import StatCard from '@/components/admin/StatCard';
 import { Users, FileText, CheckCircle2, TrendingUp, Plus, ArrowRight, Eye } from 'lucide-react';
@@ -11,10 +11,28 @@ export default function AdminDashboard() {
   const router = useRouter();
   const [tests, setTests] = useState<Test[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Show cached immediately
     setTests(getTests());
     setSubmissions(getSubmissions());
+
+    const loadAsyncData = async () => {
+      try {
+        const [freshTests, freshSubs] = await Promise.all([
+          getTestsAsync(),
+          getSubmissionsAsync()
+        ]);
+        setTests(freshTests);
+        setSubmissions(freshSubs);
+      } catch (err) {
+        console.error('Error loading admin dashboard stats:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadAsyncData();
   }, []);
 
   const totalTests = tests.length;
@@ -63,7 +81,9 @@ export default function AdminDashboard() {
           </button>
         </div>
 
-        {recentSubmissions.length === 0 ? (
+        {loading && recentSubmissions.length === 0 ? (
+          <div className="p-12 text-center text-slate-400">Natijalar yuklanmoqda...</div>
+        ) : recentSubmissions.length === 0 ? (
           <div className="p-12 text-center text-slate-400">Hali hech qanday imtihon topshirilmagan.</div>
         ) : (
           <div className="overflow-x-auto">
