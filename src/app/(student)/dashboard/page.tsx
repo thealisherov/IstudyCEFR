@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getTests } from '@/lib/db';
+import { getTests, getTestsAsync } from '@/lib/db';
 import { Test, SectionType } from '@/types/test';
 import { useTestStore } from '@/lib/store';
 import { logoutStudent } from '@/lib/auth';
@@ -20,7 +20,15 @@ export default function StudentDashboard() {
   const [lastName, setLastName] = useState('');
 
   useEffect(() => {
+    // Load cached tests immediately for instant UI
     setTests(getTests().filter(t => t.isPublished));
+    
+    // Then fetch fresh data from Supabase (for new sessions / other accounts)
+    getTestsAsync().then(freshTests => {
+      setTests(freshTests.filter(t => t.isPublished));
+    }).catch(() => {
+      // Already showing localStorage data, no action needed
+    });
   }, []);
 
   const handleOpenStartModal = (test: Test) => {

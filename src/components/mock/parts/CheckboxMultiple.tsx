@@ -22,8 +22,16 @@ interface CheckboxMultipleProps {
 
 const CheckboxMultiple: React.FC<CheckboxMultipleProps> = ({ data, onAnswer, userAnswers = {} }) => {
   const extractLetter = (optStr: string) => {
-    const match = optStr.match(/^([A-Z])[\.\s:\)]/);
+    const match = optStr.match(/^([A-Z])[\.\\s:\)]/);
     return match ? match[1] : optStr;
+  };
+
+  // Helper: get the question numbers array, falling back to questionNumber if numbers is missing
+  const getQuestionNumbers = (q: Question): number[] => {
+    if (q.numbers && q.numbers.length > 0) return q.numbers;
+    // Fallback: use questionNumber (from seed/legacy data)
+    if ((q as any).questionNumber) return [(q as any).questionNumber];
+    return [];
   };
 
   const handleToggle = (qListId: string, value: string, maxAllowed: number, questionNumbers: number[]) => {
@@ -54,8 +62,8 @@ const CheckboxMultiple: React.FC<CheckboxMultipleProps> = ({ data, onAnswer, use
       <div className="space-y-10">
         {data.questions.map((q) => {
           const qListId = q.id;
-          const questionNumbers = q.numbers || [];
-          const maxAllowed = questionNumbers.length;
+          const questionNumbers = getQuestionNumbers(q);
+          const maxAllowed = Math.max(questionNumbers.length, 1);
 
           const currentSelections = questionNumbers
             .map((num) => userAnswers[String(num)])

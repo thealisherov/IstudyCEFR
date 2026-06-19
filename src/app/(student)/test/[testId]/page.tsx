@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useTestStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
-import { getTestById, saveSubmission, getSubmissions } from '@/lib/db';
+import { getTestById, getTestByIdAsync, saveSubmission, getSubmissions } from '@/lib/db';
 import { calculateSectionScore } from '@/lib/scoring';
 import { Submission, TestPart, SectionType } from '@/types/test';
 import { toast } from 'sonner';
@@ -578,24 +578,28 @@ export default function TestPage() {
 
   // Initialize and load test state
   useEffect(() => {
-    const loaded = store.loadSavedState(testId);
-    if (!loaded) {
-      const dbTest = getTestById(testId);
-      if (dbTest) {
-        // Direct entry without name, redirect back
-        if (!store.firstName || !store.lastName) {
-          toast.error('Testni boshlashdan oldin ism-familiyangizni kiriting.');
+    const initTest = async () => {
+      const loaded = store.loadSavedState(testId);
+      if (!loaded) {
+        // Try async Supabase first, then localStorage fallback
+        const dbTest = await getTestByIdAsync(testId) || getTestById(testId);
+        if (dbTest) {
+          // Direct entry without name, redirect back
+          if (!store.firstName || !store.lastName) {
+            toast.error('Testni boshlashdan oldin ism-familiyangizni kiriting.');
+            router.push('/');
+            return;
+          }
+          store.startTest(dbTest, 'full');
+        } else {
+          toast.error('Test topilmadi.');
           router.push('/');
           return;
         }
-        store.startTest(dbTest, 'full');
-      } else {
-        toast.error('Test topilmadi.');
-        router.push('/');
-        return;
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    };
+    initTest();
   }, [testId]);
 
   // Handle section timers

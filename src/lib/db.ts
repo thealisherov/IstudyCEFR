@@ -39,14 +39,14 @@ const MOCK_TESTS: Test[] = [
         audioUrl: '',
         options: ['A', 'B', 'C'],
         questions: [
-          { id: 'l-q1', questionNumber: 1, text: 'What is the main topic of the conversation?' },
-          { id: 'l-q2', questionNumber: 2, text: 'Where did the speaker go yesterday?' },
-          { id: 'l-q3', questionNumber: 3, text: 'Which item did they buy?' },
-          { id: 'l-q4', questionNumber: 4, text: 'How much did the ticket cost?' },
-          { id: 'l-q5', questionNumber: 5, text: 'When is the meeting scheduled?' },
-          { id: 'l-q6', questionNumber: 6, text: 'Why was the flight delayed?' }
+          { id: 'l-q1', questionNumber: 1, numbers: [1], text: 'What is the main topic of the conversation?' },
+          { id: 'l-q2', questionNumber: 2, numbers: [2], text: 'Where did the speaker go yesterday?' },
+          { id: 'l-q3', questionNumber: 3, numbers: [3], text: 'Which item did they buy?' },
+          { id: 'l-q4', questionNumber: 4, numbers: [4], text: 'How much did the ticket cost?' },
+          { id: 'l-q5', questionNumber: 5, numbers: [5], text: 'When is the meeting scheduled?' },
+          { id: 'l-q6', questionNumber: 6, numbers: [6], text: 'Why was the flight delayed?' }
         ],
-        hasPerQuestionOptions: true,
+        hasPerQuestionOptions: false,
         optionDescriptions: []
       },
       {
