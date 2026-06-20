@@ -198,6 +198,10 @@ function dbRowToTest(row: any): Test {
     title: row.title,
     isPublished: row.is_published,
     createdAt: row.created_at,
+    testType: row.test_type || 'full',
+    practiceSection: row.practice_section || undefined,
+    listeningBreakTime: row.listening_break_time || 0,
+    readingBreakTime: row.reading_break_time || 0,
     listeningTime: row.listening_time,
     readingTime: row.reading_time,
     writingTime: row.writing_time,
@@ -213,6 +217,10 @@ function testToDbRow(test: Test): any {
     id: test.id,
     title: test.title,
     is_published: test.isPublished,
+    test_type: test.testType || 'full',
+    practice_section: test.practiceSection || null,
+    listening_break_time: test.listeningBreakTime || 0,
+    reading_break_time: test.readingBreakTime || 0,
     listening_time: test.listeningTime,
     reading_time: test.readingTime,
     writing_time: test.writingTime,
@@ -379,7 +387,11 @@ export async function getTestsAsync(): Promise<Test[]> {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error("Supabase getTests error:", error);
+      throw new Error(error.message);
+    }
+    
     if (data) {
       const tests = data.map(dbRowToTest);
       // Cache to localStorage for faster subsequent loads
@@ -387,9 +399,9 @@ export async function getTestsAsync(): Promise<Test[]> {
       return tests;
     }
     return []; // Supabase returned null data
-  } catch {
-    // Supabase error — return whatever is in localStorage cache
-    return getTests();
+  } catch (err) {
+    // Re-throw so UI can catch and handle it
+    throw err;
   }
 }
 
@@ -417,59 +429,98 @@ export async function getTestByIdAsync(id: string): Promise<Test | undefined> {
       .eq('id', id)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error("Supabase getTestById error:", error);
+      throw new Error(error.message);
+    }
+    
     if (data) return dbRowToTest(data);
-  } catch {
-    // Fall back
+  } catch (err) {
+    throw err;
   }
-  return getTestById(id);
+  return undefined;
 }
 
 export async function saveTest(test: Test): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  // Always update localStorage immediately for responsive UI
-  const tests = getTests();
-  const index = tests.findIndex(t => t.id === test.id);
-  if (index >= 0) {
-    tests[index] = test;
-  } else {
-    tests.push(test);
-  }
-  localStorage.setItem(TESTS_KEY, JSON.stringify(tests));
+  let finalId = test.id;
 
-  // Sync to Supabase
+  // Sync to Supabase FIRST
   const supabase = getSupabaseClient();
   if (supabase) {
-    try {
-      const row = testToDbRow(test);
-      await supabase
+    const row = testToDbRow(test);
+    
+    // For new tests generated on the client, let Supabase generate the UUID
+    if (test.id.startsWith('test-') || test.id === 'new') {
+      delete row.id;
+      
+      const { data, error } = await supabase
+        .from('tests')
+        .insert(row)
+        .select('id')
+        .single();
+        
+      if (error) {
+        console.error("Supabase saveTest (insert) error:", error);
+        throw new Error("Ma'lumotlar bazasiga yozishda xatolik: " + error.message);
+      }
+      
+      if (data?.id) {
+        finalId = data.id;
+        test.id = finalId;
+      }
+    } else {
+      // Existing DB UUID — upsert
+      const { error } = await supabase
         .from('tests')
         .upsert(row, { onConflict: 'id' });
-    } catch {
-      // Supabase error — localStorage is the fallback
+        
+      if (error) {
+        console.error("Supabase saveTest (upsert) error:", error);
+        throw new Error("Ma'lumotlar bazasini yangilashda xatolik: " + error.message);
+      }
     }
   }
+
+  // Update localStorage only after successful DB save
+  const tests = getTests();
+  const index = tests.findIndex(t => t.id === test.id || t.id === finalId || t.id === test.id.replace('test-', ''));
+  // We just use finalId
+  const finalIndex = tests.findIndex(t => t.id === finalId);
+  if (finalIndex >= 0) {
+    tests[finalIndex] = test;
+  } else {
+    // maybe original ID?
+    const oldIndex = tests.findIndex(t => t.id === test.id);
+    if (oldIndex >= 0) {
+      tests[oldIndex] = test;
+    } else {
+      tests.push(test);
+    }
+  }
+  localStorage.setItem(TESTS_KEY, JSON.stringify(tests));
 }
 
 export async function deleteTest(id: string): Promise<void> {
   if (typeof window === 'undefined') return;
 
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const { error } = await supabase
+      .from('tests')
+      .delete()
+      .eq('id', id);
+      
+    if (error) {
+      console.error("Supabase deleteTest error:", error);
+      throw new Error("Ma'lumotlar bazasidan o'chirishda xatolik: " + error.message);
+    }
+  }
+
   const tests = getTests();
   const filtered = tests.filter(t => t.id !== id);
   localStorage.setItem(TESTS_KEY, JSON.stringify(filtered));
-
-  const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      await supabase
-        .from('tests')
-        .delete()
-        .eq('id', id);
-    } catch {
-      // Supabase error — localStorage already updated
-    }
-  }
 }
 
 // =============================================
@@ -502,16 +553,20 @@ export async function getSubmissionsAsync(): Promise<Submission[]> {
       .select('*')
       .order('submitted_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error("Supabase getSubmissions error:", error);
+      throw new Error(error.message);
+    }
+    
     if (data) {
       const subs = data.map(dbRowToSubmission);
       localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify(subs));
       return subs;
     }
-  } catch {
-    // Fall back
+    return [];
+  } catch (err) {
+    throw err;
   }
-  return getSubmissions();
 }
 
 async function syncSubmissionsFromSupabase(): Promise<void> {
@@ -525,48 +580,52 @@ async function syncSubmissionsFromSupabase(): Promise<void> {
 export async function saveSubmission(submission: Submission): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  // Update localStorage immediately
+  let finalId = submission.id;
+
+  // Sync to Supabase FIRST
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const row = submissionToDbRow(submission);
+    
+    // For new submissions, don't send id (let Supabase generate UUID)
+    if (submission.id.startsWith('sub-')) {
+      const { data, error } = await supabase
+        .from('submissions')
+        .insert(row)
+        .select('id')
+        .single();
+      
+      if (error) {
+        console.error("Supabase saveSubmission (insert) error:", error);
+        throw new Error("Natijani saqlashda xatolik: " + error.message);
+      }
+      
+      if (data?.id) {
+        finalId = data.id;
+        submission.id = finalId;
+      }
+    } else {
+      // Existing DB UUID — upsert
+      const { error } = await supabase
+        .from('submissions')
+        .upsert({ id: submission.id, ...row }, { onConflict: 'id' });
+        
+      if (error) {
+        console.error("Supabase saveSubmission (upsert) error:", error);
+        throw new Error("Natijani yangilashda xatolik: " + error.message);
+      }
+    }
+  }
+
+  // Update localStorage only after successful DB save
   const submissions = getSubmissions();
-  const index = submissions.findIndex(s => s.id === submission.id);
+  const index = submissions.findIndex(s => s.id === submission.id || s.id === finalId);
   if (index >= 0) {
     submissions[index] = submission;
   } else {
     submissions.push(submission);
   }
   localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify(submissions));
-
-  // Sync to Supabase
-  const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      const row = submissionToDbRow(submission);
-      // For new submissions, don't send id (let Supabase generate UUID)
-      if (submission.id.startsWith('sub-')) {
-        // Client-generated ID — insert without id to get DB UUID
-        const { data } = await supabase
-          .from('submissions')
-          .insert(row)
-          .select('id')
-          .single();
-        
-        // Update local submission with real DB id
-        if (data?.id) {
-          const idx = submissions.findIndex(s => s.id === submission.id);
-          if (idx >= 0) {
-            submissions[idx].id = data.id;
-            localStorage.setItem(SUBMISSIONS_KEY, JSON.stringify(submissions));
-          }
-        }
-      } else {
-        // Existing DB UUID — upsert
-        await supabase
-          .from('submissions')
-          .upsert({ id: submission.id, ...row }, { onConflict: 'id' });
-      }
-    } catch {
-      // Supabase error — localStorage already updated
-    }
-  }
 }
 
 export function getSubmissionById(id: string): Submission | undefined {

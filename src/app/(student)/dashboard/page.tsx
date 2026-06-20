@@ -31,8 +31,9 @@ export default function StudentDashboard() {
     // Then fetch fresh data from Supabase (for new sessions / other accounts)
     getTestsAsync().then(freshTests => {
       setTests(freshTests.filter(t => t.isPublished));
-    }).catch(() => {
-      // Already showing localStorage data, no action needed
+    }).catch((err) => {
+      console.error("Failed to load tests from DB:", err);
+      toast.error("Testlarni serverdan yuklashda xatolik yuz berdi: " + (err.message || ''));
     }).finally(() => {
       setLoading(false);
     });

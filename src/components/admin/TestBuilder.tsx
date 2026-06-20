@@ -481,10 +481,14 @@ export default function TestBuilder({ initialTest }: TestBuilderProps) {
       listeningAudioUrl
     };
 
-    await saveTest(testObject);
-    localStorage.removeItem('cefr_draft_' + testId);
-    toast.success(initialTest ? 'Test muvaffaqiyatli yangilandi!' : 'Yangi test muvaffaqiyatli saqlandi!');
-    router.push('/admin/tests');
+    try {
+      await saveTest(testObject);
+      localStorage.removeItem('cefr_draft_' + testId);
+      toast.success(initialTest ? 'Test muvaffaqiyatli yangilandi!' : 'Yangi test muvaffaqiyatli saqlandi!');
+      router.push('/admin/tests');
+    } catch (error: any) {
+      toast.error(error.message || 'Testni saqlashda xatolik yuz berdi.');
+    }
   };
 
   return (

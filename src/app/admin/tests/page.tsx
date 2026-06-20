@@ -13,9 +13,15 @@ export default function AdminTests() {
   const [loading, setLoading] = useState(true);
 
   const loadTests = async () => {
-    const freshTests = await getTestsAsync();
-    setTests(freshTests);
-    setLoading(false);
+    try {
+      const freshTests = await getTestsAsync();
+      setTests(freshTests);
+    } catch (err: any) {
+      toast.error('Testlarni serverdan yuklashda xatolik: ' + (err.message || ''));
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
