@@ -525,6 +525,7 @@ export default function TestPage() {
       isBreak: s.isBreak,
       currentSection: s.currentSection,
       currentPartIndex: s.currentPartIndex,
+      remainingTime: s.remainingTime,
       test: s.test,
       firstName: s.firstName,
       lastName: s.lastName,
