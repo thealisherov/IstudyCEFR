@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, X, CheckCircle, Loader2, Music, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabase';
@@ -29,6 +29,10 @@ export default function FileUploader({
 
   const isAudio = folder === 'audio';
   const Icon = isAudio ? Music : ImageIcon;
+
+  useEffect(() => {
+    setManualUrl(value);
+  }, [value]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

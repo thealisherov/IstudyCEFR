@@ -42,7 +42,7 @@ interface TestState {
   tickTimer: () => void;
   submitTest: () => void;
   exitTest: () => void;
-  loadSavedState: (testId: string) => boolean;
+  loadSavedState: (testId: string, test: Test) => boolean;
 }
 
 const STORAGE_KEY_PREFIX = 'cefr_test_';
@@ -238,8 +238,8 @@ export const useTestStore = create<TestState>((set, get) => {
             });
           }
         } else {
-          // Already on writing, submit
-          get().submitTest();
+          // Already on writing, let the UI handle the submission
+          // (page.tsx will watch for remainingTime === 0 or trigger it)
         }
       }
       setTimeout(() => saveStateToStorage({}), 0);
@@ -254,7 +254,7 @@ export const useTestStore = create<TestState>((set, get) => {
         set({ remainingTime: 0 });
         const { currentSection, isPractice, isBreak } = get();
         if (isPractice || (currentSection === 'writing' && !isBreak)) {
-          get().submitTest();
+          // page.tsx will catch remainingTime === 0 and trigger handleSubmitExam
         } else {
           get().goToNextSection();
         }
@@ -298,7 +298,7 @@ export const useTestStore = create<TestState>((set, get) => {
       });
     },
 
-    loadSavedState: (testId) => {
+    loadSavedState: (testId, test) => {
       if (typeof window === 'undefined') return false;
 
       const key = `${STORAGE_KEY_PREFIX}${testId}`;
@@ -315,6 +315,7 @@ export const useTestStore = create<TestState>((set, get) => {
         }
 
         set({
+          test,
           firstName: data.firstName || '',
           lastName: data.lastName || '',
           isPractice: data.isPractice || false,

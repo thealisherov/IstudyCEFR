@@ -600,6 +600,7 @@ export default function TestPage() {
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     isDragging.current = true;
+    document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
@@ -618,6 +619,7 @@ export default function TestPage() {
 
   const handleMouseUp = () => {
     isDragging.current = false;
+    document.body.style.userSelect = '';
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
   };
@@ -636,23 +638,23 @@ export default function TestPage() {
   // Initialize and load test state
   useEffect(() => {
     const initTest = async () => {
-      const loaded = store.loadSavedState(testId);
+      const dbTest = await getTestByIdAsync(testId) || getTestById(testId);
+      
+      if (!dbTest) {
+        toast.error('Test topilmadi.');
+        router.push('/');
+        return;
+      }
+
+      const loaded = store.loadSavedState(testId, dbTest);
       if (!loaded) {
-        // Try async Supabase first, then localStorage fallback
-        const dbTest = await getTestByIdAsync(testId) || getTestById(testId);
-        if (dbTest) {
-          // Direct entry without name, redirect back
-          if (!store.firstName || !store.lastName) {
-            toast.error('Testni boshlashdan oldin ism-familiyangizni kiriting.');
-            router.push('/');
-            return;
-          }
-          store.startTest(dbTest, 'full');
-        } else {
-          toast.error('Test topilmadi.');
+        // Direct entry without name, redirect back
+        if (!store.firstName || !store.lastName) {
+          toast.error('Testni boshlashdan oldin ism-familiyangizni kiriting.');
           router.push('/');
           return;
         }
+        store.startTest(dbTest, 'full');
       }
       setLoading(false);
     };
@@ -669,6 +671,17 @@ export default function TestPage() {
 
     return () => clearInterval(interval);
   }, [store.isTestStarted, store.isTestSubmitted]);
+
+  // Auto-submit when time runs out on the final section or practice
+  useEffect(() => {
+    if (store.isTestStarted && !store.isTestSubmitted && store.remainingTime === 0) {
+      const { currentSection, isPractice, isBreak } = store;
+      if (isPractice || (currentSection === 'writing' && !isBreak)) {
+        // Auto submit
+        handleSubmitExam();
+      }
+    }
+  }, [store.remainingTime, store.isTestStarted, store.isTestSubmitted, store.currentSection, store.isPractice, store.isBreak]);
 
 
 
@@ -713,17 +726,31 @@ export default function TestPage() {
     });
   }, [activeParts, store.currentSection]);
 
-  // Flattened answered question IDs list
+  // Flattened answered question IDs list for current section
   const answeredIds = useMemo(() => {
-    return Object.keys(store.answers).filter(key => store.answers[key] !== '');
-  }, [store.answers]);
+    const prefix = `${store.currentSection}-`;
+    return Object.keys(store.answers)
+      .filter(key => key.startsWith(prefix) && store.answers[key] !== '')
+      .map(key => key.replace(prefix, ''));
+  }, [store.answers, store.currentSection]);
+
+  const currentSectionAnswers = useMemo(() => {
+    const prefix = `${store.currentSection}-`;
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(store.answers)) {
+      if (k.startsWith(prefix)) {
+        result[k.replace(prefix, '')] = v;
+      }
+    }
+    return result;
+  }, [store.answers, store.currentSection]);
 
   const handlePartChange = (index: number) => {
     store.setCurrentPartIndex(index);
   };
 
   const handleAnswerSubmit = (qId: string, val: string) => {
-    store.setAnswer(qId, val);
+    store.setAnswer(`${store.currentSection}-${qId}`, val);
   };
 
   const handleWritingAnswerChange = (partId: string, val: string) => {
@@ -818,15 +845,25 @@ export default function TestPage() {
       }
     });
 
+    const listeningAnswersFiltered: Record<string, string> = {};
+    const readingAnswersFiltered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(store.answers)) {
+      if (k.startsWith('listening-')) {
+        listeningAnswersFiltered[k.replace('listening-', '')] = v;
+      } else if (k.startsWith('reading-')) {
+        readingAnswersFiltered[k.replace('reading-', '')] = v;
+      }
+    }
+
     if (Object.keys(listeningCorrectAnswers).length > 0) {
-      const score = calculateSectionScore(store.answers, listeningCorrectAnswers, 'listening');
+      const score = calculateSectionScore(listeningAnswersFiltered, listeningCorrectAnswers, 'listening');
       lCorrect = score.correct;
       lTotal = score.total;
       lCEFR = score.cefrScore;
     }
 
     if (Object.keys(readingCorrectAnswers).length > 0) {
-      const score = calculateSectionScore(store.answers, readingCorrectAnswers, 'reading');
+      const score = calculateSectionScore(readingAnswersFiltered, readingCorrectAnswers, 'reading');
       rCorrect = score.correct;
       rTotal = score.total;
       rCEFR = score.cefrScore;
@@ -970,7 +1007,7 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'yn_ng' && (
@@ -978,7 +1015,7 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'mc_one' && (
@@ -986,28 +1023,28 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'mc_multi' && (
           <CheckboxMultiple
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'gap_fill' && (
           <GapFill
             data={activePart}
             onAnswer={handleAnswerSubmit}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'summary_comp' && (
           <GapFill
             data={activePart}
             onAnswer={handleAnswerSubmit}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'match_info' && (
@@ -1015,7 +1052,7 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'match_features' && (
@@ -1023,7 +1060,7 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'match_headings' && (
@@ -1031,7 +1068,7 @@ export default function TestPage() {
             data={activePart as any}
             onAnswer={handleAnswerSubmit}
             startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-            userAnswers={store.answers}
+            userAnswers={currentSectionAnswers}
           />
         )}
         {activePart.type === 'mixed' && (
@@ -1055,14 +1092,14 @@ export default function TestPage() {
                         data={subPart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={subStart}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {(subPart.type === 'gap_fill' || subPart.type === 'gap_fill_missing' || subPart.type === 'summary_comp' || subPart.type === 'gap_input') && (
                       <GapFill
                         data={subPart}
                         onAnswer={handleAnswerSubmit}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {(subPart.type === 'match_info' || subPart.type === 'matching' || subPart.type === 'match_features' || subPart.type === 'match_headings') && (
@@ -1070,7 +1107,7 @@ export default function TestPage() {
                         data={subPart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={subStart}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {subPart.type === 'map_labeling' && (
@@ -1078,7 +1115,7 @@ export default function TestPage() {
                         data={subPart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={subStart}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {(subPart.type === 'tf_ng' || subPart.type === 'yn_ng') && (
@@ -1086,7 +1123,7 @@ export default function TestPage() {
                         data={subPart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={subStart}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                   </div>
@@ -1217,7 +1254,7 @@ export default function TestPage() {
                       data={activePart as any}
                       onAnswer={handleAnswerSubmit}
                       startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                      userAnswers={store.answers}
+                      userAnswers={currentSectionAnswers}
                       hideImage
                       hideInstruction
                     />
@@ -1234,14 +1271,14 @@ export default function TestPage() {
                         data={activePart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {(activePart?.type === 'gap_fill' || activePart?.type === 'gap_fill_missing' || activePart?.type === 'gap_input' || activePart?.type === 'summary_comp') && (
                       <GapFill
                         data={activePart}
                         onAnswer={handleAnswerSubmit}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {(activePart?.type === 'matching' || activePart?.type === 'match_info' || activePart?.type === 'match_features' || activePart?.type === 'match_headings') && (
@@ -1249,14 +1286,14 @@ export default function TestPage() {
                         data={activePart as any}
                         onAnswer={handleAnswerSubmit}
                         startIndex={partQuestionRanges[store.currentPartIndex]?.start}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                     {activePart?.type === 'abc_checkbox' && (
                       <CheckboxMultiple
                         data={activePart as any}
                         onAnswer={handleAnswerSubmit}
-                        userAnswers={store.answers}
+                        userAnswers={currentSectionAnswers}
                       />
                     )}
                   </div>
@@ -1267,7 +1304,7 @@ export default function TestPage() {
 
           {store.currentSection === 'reading' && (
             isSplitReading ? (
-              <div ref={containerRef} className="split-pane flex w-full h-full select-none">
+              <div ref={containerRef} className="split-pane flex w-full h-full">
                 {/* Left side: Passage Text */}
                 <div className="pane-left overflow-y-auto" style={{ width: `${leftWidth}%`, borderRight: 'none' }}>
                   {(activePart as TestPart)?.passageTitle && (
