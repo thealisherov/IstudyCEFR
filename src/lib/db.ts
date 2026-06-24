@@ -502,11 +502,104 @@ export async function saveTest(test: Test): Promise<void> {
   localStorage.setItem(TESTS_KEY, JSON.stringify(tests));
 }
 
+/**
+ * Extract the storage path from a Supabase public URL.
+ * e.g. "https://xxx.supabase.co/storage/v1/object/public/cefr-assets/audio/123_file.mp3"
+ *  → "audio/123_file.mp3"
+ */
+function extractStoragePath(publicUrl: string): string | null {
+  if (!publicUrl || !publicUrl.trim()) return null;
+  const marker = '/storage/v1/object/public/cefr-assets/';
+  const idx = publicUrl.indexOf(marker);
+  if (idx >= 0) {
+    return publicUrl.substring(idx + marker.length);
+  }
+  return null;
+}
+
+/**
+ * Collect all storage file paths (audio/images) from a test object.
+ */
+function collectTestStoragePaths(test: Test): string[] {
+  const paths: string[] = [];
+
+  // Global listening audio
+  if (test.listeningAudioUrl) {
+    const p = extractStoragePath(test.listeningAudioUrl);
+    if (p) paths.push(p);
+  }
+
+  // Per-part audio and images in listening parts
+  for (const part of test.listeningParts || []) {
+    if (part.audioUrl) {
+      const p = extractStoragePath(part.audioUrl);
+      if (p) paths.push(p);
+    }
+    if (part.imageUrl) {
+      const p = extractStoragePath(part.imageUrl);
+      if (p) paths.push(p);
+    }
+    // Check nested parts
+    if (part.nestedParts) {
+      for (const np of part.nestedParts) {
+        if (np.audioUrl) {
+          const p = extractStoragePath(np.audioUrl);
+          if (p) paths.push(p);
+        }
+        if (np.imageUrl) {
+          const p = extractStoragePath(np.imageUrl);
+          if (p) paths.push(p);
+        }
+      }
+    }
+  }
+
+  // Per-part images in reading parts (e.g. map labeling)
+  for (const part of test.readingParts || []) {
+    if ((part as any).imageUrl) {
+      const p = extractStoragePath((part as any).imageUrl);
+      if (p) paths.push(p);
+    }
+    if (part.nestedParts) {
+      for (const np of part.nestedParts) {
+        if ((np as any).imageUrl) {
+          const p = extractStoragePath((np as any).imageUrl);
+          if (p) paths.push(p);
+        }
+      }
+    }
+  }
+
+  return paths;
+}
+
 export async function deleteTest(id: string): Promise<void> {
   if (typeof window === 'undefined') return;
 
   const supabase = getSupabaseClient();
   if (supabase) {
+    // 1. Fetch the test first to get all file URLs before deleting
+    let storagePaths: string[] = [];
+    try {
+      const { data: testRow } = await supabase
+        .from('tests')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (testRow) {
+        const test = dbRowToTest(testRow);
+        storagePaths = collectTestStoragePaths(test);
+      }
+    } catch {
+      // If we can't fetch the test, try localStorage fallback for file paths
+      const cachedTest = getTests().find(t => t.id === id);
+      if (cachedTest) {
+        storagePaths = collectTestStoragePaths(cachedTest);
+      }
+    }
+
+    // 2. Delete the test row from the database
     const { error } = await supabase
       .from('tests')
       .delete()
@@ -515,6 +608,20 @@ export async function deleteTest(id: string): Promise<void> {
     if (error) {
       console.error("Supabase deleteTest error:", error);
       throw new Error("Ma'lumotlar bazasidan o'chirishda xatolik: " + error.message);
+    }
+
+    // 3. Delete associated storage files (audio, images)
+    if (storagePaths.length > 0) {
+      try {
+        await fetch('/api/upload/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths: storagePaths }),
+        });
+      } catch (storageErr) {
+        // Log but don't block — test row is already deleted
+        console.warn('Storage fayllarini o\'chirishda xatolik:', storageErr);
+      }
     }
   }
 

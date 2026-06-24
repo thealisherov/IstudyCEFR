@@ -2,33 +2,199 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getSubmissions, saveSubmission, getTestById } from '@/lib/db';
-import { Submission } from '@/types/test';
+import { getSubmissions, getSubmissionsAsync, saveSubmission, getTestById, getTestByIdAsync } from '@/lib/db';
+import { Submission, Test, TestPart } from '@/types/test';
+import { normalizeAnswer } from '@/lib/scoring';
 import { toast } from 'sonner';
-import { AlertCircle, ArrowLeft, Calendar, Star, Copy } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Star, Copy, CheckCircle, XCircle, Minus } from 'lucide-react';
+import parse from 'html-react-parser';
+
+// Extract all questions with correct answers from test parts
+function extractQuestions(parts: TestPart[]): Array<{ num: number; text: string; answer: string; altAnswers?: string[]; partTitle: string; partType: string; content?: string }> {
+  const questions: Array<{ num: number; text: string; answer: string; altAnswers?: string[]; partTitle: string; partType: string; content?: string }> = [];
+  for (const part of parts) {
+    if (part.type === 'mixed' && part.nestedParts && part.nestedParts.length > 0) {
+      for (const np of part.nestedParts) {
+        for (const q of np.questions || []) {
+          questions.push({ num: q.questionNumber, text: q.text, answer: q.answer || '', altAnswers: q.alternativeAnswers, partTitle: part.title, partType: np.type, content: np.content });
+        }
+      }
+    } else {
+      for (const q of part.questions || []) {
+        questions.push({ num: q.questionNumber, text: q.text, answer: q.answer || '', altAnswers: q.alternativeAnswers, partTitle: part.title, partType: part.type, content: part.content });
+      }
+    }
+  }
+  return questions;
+}
+
+function isCorrect(userAns: string, correctAns: string, altAnswers?: string[]): boolean {
+  const u = normalizeAnswer(userAns);
+  const c = normalizeAnswer(correctAns);
+  if (u === c && c !== '') return true;
+  if (altAnswers) return altAnswers.some(a => normalizeAnswer(a) === u && u !== '');
+  return false;
+}
+
+// Render gap_fill content with answer comparison (read-only)
+function GapFillReview({ content, userAnswers, questions }: { content: string; userAnswers: Record<string, string>; questions: Array<{ num: number; answer: string; altAnswers?: string[] }> }) {
+  let blankIdx = 0;
+  let processed = (content || '').replace(/\(BLANK\)/g, () => {
+    const q = questions[blankIdx++];
+    return q ? `{${q.num}}` : '(BLANK)';
+  });
+  const clean = processed.replace(/\[cite[^\]]*\]/ig, '').replace(/\n/g, '<br/>');
+
+  const opts = {
+    replace: (domNode: any) => {
+      if (domNode.type === 'text') {
+        const text = domNode.data;
+        if (/\{\d+\}/.test(text)) {
+          const parts = text.split(/(\{\d+\})/g);
+          return (
+            <React.Fragment>
+              {parts.map((part: string, i: number) => {
+                const m = part.match(/^\{(\d+)\}$/);
+                if (m) {
+                  const qNum = m[1];
+                  const userVal = userAnswers[qNum] || '';
+                  const qInfo = questions.find(q => q.num === parseInt(qNum));
+                  const correct = qInfo ? isCorrect(userVal, qInfo.answer, qInfo.altAnswers) : false;
+                  return (
+                    <span key={i} className={`inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded border text-xs font-semibold ${correct ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300' : 'bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300'}`}>
+                      <span className="font-mono text-[10px] text-slate-400 mr-1">{qNum}</span>
+                      {userVal || '—'}
+                      {correct ? <CheckCircle className="w-3 h-3 text-emerald-500 ml-0.5" /> : <XCircle className="w-3 h-3 text-red-500 ml-0.5" />}
+                      {!correct && qInfo?.answer && <span className="text-emerald-600 dark:text-emerald-400 ml-1">({qInfo.answer})</span>}
+                    </span>
+                  );
+                }
+                return <span key={i}>{part}</span>;
+              })}
+            </React.Fragment>
+          );
+        }
+      }
+    }
+  };
+
+  return (
+    <div className="leading-[2.8] text-sm text-slate-700 dark:text-slate-300">
+      {parse(clean, opts)}
+    </div>
+  );
+}
+
+// Answer comparison table for non-gap-fill parts
+function AnswerTable({ questions, userAnswers, sectionLabel }: { questions: Array<{ num: number; text: string; answer: string; altAnswers?: string[]; partTitle: string; partType: string; content?: string }>; userAnswers: Record<string, string>; sectionLabel: string }) {
+  if (questions.length === 0) return null;
+  // Group by partTitle
+  const grouped: Record<string, typeof questions> = {};
+  for (const q of questions) {
+    if (!grouped[q.partTitle]) grouped[q.partTitle] = [];
+    grouped[q.partTitle].push(q);
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-extrabold text-sm uppercase tracking-wider text-slate-700 dark:text-slate-200">{sectionLabel} — Javoblar Taqqoslash</h3>
+      {Object.entries(grouped).map(([partTitle, qs]) => {
+        // Check if this part has gap_fill content
+        const isGapFill = qs[0]?.partType === 'gap_fill' || qs[0]?.partType === 'gap_fill_missing' || qs[0]?.partType === 'gap_input';
+        const content = qs[0]?.content;
+
+        return (
+          <div key={partTitle} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+              <span className="text-xs font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">{partTitle}</span>
+            </div>
+            {isGapFill && content ? (
+              <div className="p-4">
+                <GapFillReview content={content} userAnswers={userAnswers} questions={qs.map(q => ({ num: q.num, answer: q.answer, altAnswers: q.altAnswers }))} />
+              </div>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-50/50 dark:bg-slate-950/50 text-slate-500 dark:text-slate-400 text-[10px] uppercase tracking-wider font-bold">
+                    <th className="px-4 py-2.5 text-left w-16">Savol</th>
+                    <th className="px-4 py-2.5 text-left">O'quvchi javobi</th>
+                    <th className="px-4 py-2.5 text-left">To'g'ri javob</th>
+                    <th className="px-4 py-2.5 text-center w-20">Holat</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {qs.map(q => {
+                    const userVal = userAnswers[String(q.num)] || '';
+                    const ok = isCorrect(userVal, q.answer, q.altAnswers);
+                    const empty = !userVal.trim();
+                    return (
+                      <tr key={q.num} className={ok ? 'bg-emerald-50/30 dark:bg-emerald-950/10' : empty ? '' : 'bg-red-50/30 dark:bg-red-950/10'}>
+                        <td className="px-4 py-2.5 font-bold text-slate-500">Q{q.num}</td>
+                        <td className={`px-4 py-2.5 font-semibold ${ok ? 'text-emerald-700 dark:text-emerald-300' : empty ? 'text-slate-400 italic' : 'text-red-700 dark:text-red-300'}`}>
+                          {userVal || '(Javob berilmagan)'}
+                        </td>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800 dark:text-slate-200">{q.answer}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          {ok ? (
+                            <span className="inline-flex items-center gap-1 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full text-[10px] font-bold"><CheckCircle className="w-3 h-3" /> To'g'ri</span>
+                          ) : empty ? (
+                            <span className="inline-flex items-center gap-1 text-slate-400 text-[10px] font-bold"><Minus className="w-3 h-3" /> Bo'sh</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-0.5 rounded-full text-[10px] font-bold"><XCircle className="w-3 h-3" /> Noto'g'ri</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function SubmissionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [selectedSub, setSelectedSub] = useState<Submission | null>(null);
+  const [selectedTest, setSelectedTest] = useState<Test | null>(null);
   const [writingScore, setWritingScore] = useState(0);
   const [writingFeedback, setWritingFeedback] = useState('');
 
   useEffect(() => {
-    const allSubs = getSubmissions();
-    setSubmissions(allSubs);
-    const subId = searchParams.get('id');
-    if (subId) {
-      const found = allSubs.find(s => s.id === subId);
-      if (found) handleSelectSubmission(found);
-    }
+    const load = async () => {
+      let allSubs: Submission[];
+      try {
+        allSubs = await getSubmissionsAsync();
+      } catch {
+        allSubs = getSubmissions();
+      }
+      setSubmissions(allSubs);
+      const subId = searchParams.get('id');
+      if (subId) {
+        const found = allSubs.find(s => s.id === subId);
+        if (found) handleSelectSubmission(found);
+      }
+    };
+    load();
   }, [searchParams]);
 
-  const handleSelectSubmission = (sub: Submission) => {
+  const handleSelectSubmission = async (sub: Submission) => {
     setSelectedSub(sub);
     setWritingScore(sub.writingScore || 0);
     setWritingFeedback(sub.writingFeedback || '');
+    // Load associated test for answer comparison
+    try {
+      const test = await getTestByIdAsync(sub.testId) || getTestById(sub.testId);
+      setSelectedTest(test || null);
+    } catch {
+      const test = getTestById(sub.testId);
+      setSelectedTest(test || null);
+    }
   };
 
   const handleGradeSubmit = async (e: React.FormEvent) => {
@@ -37,7 +203,7 @@ function SubmissionsContent() {
     const updated: Submission = { ...selectedSub, writingScore, writingFeedback, isGraded: true };
     await saveSubmission(updated);
     setSelectedSub(updated);
-    setSubmissions(getSubmissions());
+    try { setSubmissions(await getSubmissionsAsync()); } catch { setSubmissions(getSubmissions()); }
     toast.success('Writing muvaffaqiyatli baholandi!');
   };
 
@@ -45,10 +211,13 @@ function SubmissionsContent() {
 
   // ===== DETAIL VIEW =====
   if (selectedSub) {
+    const listeningQs = selectedTest ? extractQuestions(selectedTest.listeningParts) : [];
+    const readingQs = selectedTest ? extractQuestions(selectedTest.readingParts) : [];
+
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <button onClick={() => { setSelectedSub(null); router.replace('/admin/submissions'); }}
+          <button onClick={() => { setSelectedSub(null); setSelectedTest(null); router.replace('/admin/submissions'); }}
             className="p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition">
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -80,6 +249,16 @@ function SubmissionsContent() {
                 </div>
               </div>
             </div>
+
+            {/* Listening Answer Comparison */}
+            {listeningQs.length > 0 && (
+              <AnswerTable questions={listeningQs} userAnswers={selectedSub.answers} sectionLabel="Listening" />
+            )}
+
+            {/* Reading Answer Comparison */}
+            {readingQs.length > 0 && (
+              <AnswerTable questions={readingQs} userAnswers={selectedSub.answers} sectionLabel="Reading" />
+            )}
 
             {/* Writing Answers */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6 transition-colors">

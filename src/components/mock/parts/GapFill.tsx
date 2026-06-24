@@ -106,7 +106,7 @@ const GapFill: React.FC<GapFillProps> = ({ data, onAnswer, userAnswers = {} }) =
   return (
     <div className="mb-8 font-sans">
       <div className="space-y-3 leading-loose text-gray-800 ielts-html-content">
-        <div className="leading-[1.4] [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_li]:mb-1 [&_li]:mt-0">
+        <div className="leading-[2.2] [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-1 [&_li]:mb-1 [&_li]:mt-0">
           {parse(cleanContent, options)}
         </div>
       </div>

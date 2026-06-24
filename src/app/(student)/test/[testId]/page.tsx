@@ -66,49 +66,16 @@ const AudioPlayer = () => {
 
     let cancelled = false;
     isActiveRef.current = true;
+    let monitorInterval: ReturnType<typeof setInterval> | null = null;
+    let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
-    // ===== STRATEGY 1: Web Audio API (Primary - invisible to browser/extensions) =====
-    const startWebAudioPlayback = async () => {
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioCtxRef.current = ctx;
-
-        const response = await fetch(audioUrl);
-        if (cancelled) return;
-        const arrayBuffer = await response.arrayBuffer();
-        if (cancelled) return;
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-        if (cancelled) return;
-
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(ctx.destination);
-        source.start(0);
-        sourceNodeRef.current = source;
-        setIsPlaying(true);
-
-        source.onended = () => {
-          if (!cancelled) setIsPlaying(false);
-        };
-
-        // Prevent AudioContext suspension (browser may suspend on tab switch)
-        const keepAlive = setInterval(() => {
-          if (cancelled) { clearInterval(keepAlive); return; }
-          if (ctx.state === 'suspended') {
-            ctx.resume().catch(() => {});
-          }
-        }, 200);
-
-        return () => clearInterval(keepAlive);
-      } catch {
-        // Web Audio API failed, use fallback
-        if (!cancelled) startFallbackPlayback();
-      }
-    };
-
-    // ===== STRATEGY 2: HTMLAudioElement fallback with aggressive protection =====
-    const startFallbackPlayback = () => {
+    // ===== PRIMARY: HTMLAudioElement routed through Web Audio API =====
+    // This gives us both streaming (instant start) AND browser media control invisibility.
+    // createMediaElementSource() detaches the audio from browser's default output,
+    // routing it through AudioContext instead — Chrome media panel can't control it.
+    const startStreamingPlayback = () => {
       const audio = new Audio();
+      audio.crossOrigin = 'anonymous';
       audio.src = audioUrl;
       audio.volume = 1;
       audio.preload = 'auto';
@@ -117,15 +84,34 @@ const AudioPlayer = () => {
       audio.setAttribute('disableRemotePlayback', '');
       fallbackAudioRef.current = audio;
 
+      // Route through Web Audio API to hide from browser media controls
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = ctx;
+        const mediaSource = ctx.createMediaElementSource(audio);
+        mediaSource.connect(ctx.destination);
+
+        // Keep AudioContext alive
+        keepAliveInterval = setInterval(() => {
+          if (cancelled) { if (keepAliveInterval) clearInterval(keepAliveInterval); return; }
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+        }, 200);
+      } catch {
+        // createMediaElementSource failed (CORS or browser issue) — audio still plays directly
+      }
+
       const forcePlay = () => {
         if (cancelled || audio.ended) return;
         audio.play().catch(() => {});
       };
 
-      // Aggressive pause interception
+      // Aggressive pause interception — immediate, no requestAnimationFrame delay
       audio.addEventListener('pause', () => {
         if (!cancelled && !audio.ended) {
-          requestAnimationFrame(forcePlay);
+          // Immediate re-play to counteract browser media panel pause
+          audio.play().catch(() => {});
         }
       });
 
@@ -137,7 +123,6 @@ const AudioPlayer = () => {
       });
       audio.addEventListener('seeking', () => {
         if (cancelled) return;
-        // If someone tries to seek, snap back
         if (Math.abs(audio.currentTime - expectedTime) > 1) {
           audio.currentTime = expectedTime;
         }
@@ -168,35 +153,102 @@ const AudioPlayer = () => {
         if (!cancelled) setIsPlaying(false);
       });
 
+      // Handle load error — fall back to pure Web Audio API
+      audio.addEventListener('error', () => {
+        if (!cancelled) {
+          console.warn('Streaming playback failed, falling back to Web Audio API buffer');
+          startWebAudioFallback();
+        }
+      });
+
       // Start playing
       audio.play().then(() => {
         if (!cancelled) setIsPlaying(true);
-      }).catch(() => {});
+      }).catch(() => {
+        // autoplay blocked or CORS issue — fall back
+        if (!cancelled) startWebAudioFallback();
+      });
 
-      // Continuous monitoring: re-force play every 500ms
-      const monitor = setInterval(() => {
-        if (cancelled) { clearInterval(monitor); return; }
+      // High-frequency monitor: re-force play every 300ms
+      monitorInterval = setInterval(() => {
+        if (cancelled) { if (monitorInterval) clearInterval(monitorInterval); return; }
         if (audio.paused && !audio.ended) {
           forcePlay();
         }
-      }, 500);
+      }, 300);
     };
 
-    // ===== Media Session API Override =====
+    // ===== FALLBACK: Pure Web Audio API (downloads full file then plays) =====
+    const startWebAudioFallback = async () => {
+      // Clean up any previous streaming attempt
+      if (fallbackAudioRef.current) {
+        try {
+          fallbackAudioRef.current.pause();
+          fallbackAudioRef.current.src = '';
+        } catch {}
+        fallbackAudioRef.current = null;
+      }
+
+      try {
+        const ctx = audioCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = ctx;
+
+        const response = await fetch(audioUrl);
+        if (cancelled) return;
+        const arrayBuffer = await response.arrayBuffer();
+        if (cancelled) return;
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        if (cancelled) return;
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        sourceNodeRef.current = source;
+        setIsPlaying(true);
+
+        source.onended = () => {
+          if (!cancelled) setIsPlaying(false);
+        };
+
+        // Prevent AudioContext suspension
+        keepAliveInterval = setInterval(() => {
+          if (cancelled) { if (keepAliveInterval) clearInterval(keepAliveInterval); return; }
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+        }, 200);
+      } catch {
+        if (!cancelled) {
+          console.error('Both audio playback strategies failed');
+          setIsPlaying(false);
+        }
+      }
+    };
+
+    // ===== Media Session API — actively fight browser controls =====
     if ('mediaSession' in navigator) {
-      const noop = () => {};
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'Examination Audio',
-        artist: 'CEFR Listening',
-      });
-      navigator.mediaSession.setActionHandler('pause', noop);
-      navigator.mediaSession.setActionHandler('play', noop);
-      navigator.mediaSession.setActionHandler('seekbackward', noop);
-      navigator.mediaSession.setActionHandler('seekforward', noop);
-      navigator.mediaSession.setActionHandler('seekto', noop);
-      navigator.mediaSession.setActionHandler('stop', noop);
-      navigator.mediaSession.setActionHandler('previoustrack', noop);
-      navigator.mediaSession.setActionHandler('nexttrack', noop);
+      // Do NOT set metadata — setting it feeds Chrome's media panel title/artist
+      navigator.mediaSession.metadata = null;
+
+      // Active handlers that counteract any control attempt
+      const activeForcePlay = () => {
+        if (fallbackAudioRef.current && !fallbackAudioRef.current.ended) {
+          fallbackAudioRef.current.play().catch(() => {});
+        }
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume().catch(() => {});
+        }
+      };
+
+      navigator.mediaSession.setActionHandler('pause', activeForcePlay);
+      navigator.mediaSession.setActionHandler('play', activeForcePlay);
+      navigator.mediaSession.setActionHandler('seekbackward', () => {});
+      navigator.mediaSession.setActionHandler('seekforward', () => {});
+      navigator.mediaSession.setActionHandler('seekto', () => {});
+      navigator.mediaSession.setActionHandler('stop', activeForcePlay);
+      navigator.mediaSession.setActionHandler('previoustrack', () => {});
+      navigator.mediaSession.setActionHandler('nexttrack', () => {});
     }
 
     // ===== Block media keyboard shortcuts =====
@@ -240,12 +292,16 @@ const AudioPlayer = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Start playback
-    startWebAudioPlayback();
+    startStreamingPlayback();
 
     // ===== Cleanup =====
     return () => {
       cancelled = true;
       isActiveRef.current = false;
+
+      // Stop intervals
+      if (monitorInterval) clearInterval(monitorInterval);
+      if (keepAliveInterval) clearInterval(keepAliveInterval);
 
       // Stop Web Audio
       try {
@@ -257,7 +313,7 @@ const AudioPlayer = () => {
       sourceNodeRef.current = null;
       audioCtxRef.current = null;
 
-      // Stop fallback
+      // Stop streaming audio element
       if (fallbackAudioRef.current) {
         fallbackAudioRef.current.pause();
         fallbackAudioRef.current.src = '';
@@ -271,6 +327,7 @@ const AudioPlayer = () => {
 
       // Clear Media Session
       if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = null;
         const handlers: MediaSessionAction[] = ['pause', 'play', 'seekbackward', 'seekforward', 'seekto', 'stop', 'previoustrack', 'nexttrack'];
         handlers.forEach(action => {
           try { navigator.mediaSession.setActionHandler(action, null); } catch {}
